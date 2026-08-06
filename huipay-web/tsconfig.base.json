@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@huipay/shared": ["packages/shared/src"],
+      "@huipay/shared/*": ["packages/shared/src/*"],
+      "@huipay/checkout-sdk": ["packages/checkout-sdk/src"],
+      "@huipay/checkout-sdk/*": ["packages/checkout-sdk/src/*"],
+      "@huipay/ui-kit": ["packages/ui-kit/src"],
+      "@huipay/ui-kit/*": ["packages/ui-kit/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist"]
+}

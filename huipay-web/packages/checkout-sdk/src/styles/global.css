@@ -1,0 +1,21 @@
+/* 收银台全局样式 */
+.huipay-checkout {
+  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, sans-serif;
+  color: #0e1a2b;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(14, 26, 43, 0.06);
+}
+
+.huipay-checkout .ant-radio-wrapper {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #e3e8f1;
+  border-radius: 8px;
+}
+
+.huipay-checkout .ant-radio-wrapper-checked {
+  border-color: #1e6fff;
+  background: rgba(30, 111, 255, 0.05);
+}

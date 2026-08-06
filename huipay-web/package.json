@@ -1,0 +1,27 @@
+{
+  "name": "huipay-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "汇聚付 HuiPay 前端 monorepo（pnpm workspace）",
+  "scripts": {
+    "dev:merchant": "pnpm --filter huipay-merchant-portal dev",
+    "dev:admin": "pnpm --filter huipay-admin-portal dev",
+    "dev:sdk": "pnpm --filter huipay-checkout-sdk dev",
+    "build:merchant": "pnpm --filter huipay-merchant-portal build",
+    "build:admin": "pnpm --filter huipay-admin-portal build",
+    "build:sdk": "pnpm --filter huipay-checkout-sdk build",
+    "build:all": "pnpm -r --filter \"./packages/*\" build",
+    "lint": "pnpm -r --filter \"./packages/*\" run lint",
+    "test": "pnpm -r --filter \"./packages/*\" run test"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "typescript": "^5.4.0",
+    "prettier": "^3.2.0"
+  }
+}
