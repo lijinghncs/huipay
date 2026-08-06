@@ -66,7 +66,6 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) error {
 		if err != nil {
 			return err
 		}
-		idemKey := fmt.Sprintf("%s:%s:lv%d:e%d", req.IdempotencyKey, req.OrderNo, a.Level, a.EntityID)
 		if err := e.ledger.Transfer(ctx, &ledger.TransferRequest{
 			FromWalletID: req.SourceWallet,
 			ToWalletID:   toWalletID,

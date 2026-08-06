@@ -20,6 +20,7 @@ type EntryInput struct {
 	WalletID       uint64
 	Direction      string // DEBIT / CREDIT
 	Amount         int64
+	BalanceAfter   int64
 	BizType        string // PAYMENT / SPLIT / REFUND / WITHDRAW / ADJUST
 	BizID          string
 	CounterpartyID *uint64

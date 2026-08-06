@@ -35,9 +35,22 @@ func MustOpen(cfg *config.Config, log logger.Interface) (*DB, error) {
 	return out, nil
 }
 
+// silentLogger 不打 SQL 日志（GORM logger.Interface 用 interface{} 实现）；
+// 真实项目应将 GORM 事件转发到 zap，此处先静默避免编译失败。
+type silentLogger struct{}
+
+func (silentLogger) LogMode(logger.LogLevel) logger.Interface { return silentLogger{} }
+func (silentLogger) Info(_ context.Context, _ string, _ ...interface{})    {}
+func (silentLogger) Warn(_ context.Context, _ string, _ ...interface{})    {}
+func (silentLogger) Error(_ context.Context, _ string, _ ...interface{})   {}
+func (silentLogger) Trace(_ context.Context, _ time.Time, _ func() (string, int64), _ error) {}
+
 func open(dsn string, log logger.Interface) (*gorm.DB, error) {
+	if log == nil {
+		log = silentLogger{}
+	}
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: log,
+		Logger:  log,
 		NowFunc: func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {

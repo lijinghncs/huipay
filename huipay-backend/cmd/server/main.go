@@ -43,10 +43,14 @@ func main() {
 	// 2. 初始化日志
 	logger := obs.NewZapLogger(cfg.LogLevel)
 
-	// 3. 初始化 MySQL 主从
-	dbConn, err := db.MustOpen(cfg, logger)
+	// 3. 初始化 MySQL 主从（HUIPAY_SKIP_DB=true 时跳过，便于本地冒烟）
+	dbConn, err := db.MustOpen(cfg, nil)
 	if err != nil {
-		logger.Fatal(fmt.Sprintf("db open failed: %v", err))
+		if os.Getenv("HUIPAY_SKIP_DB") != "true" {
+			logger.Fatal(fmt.Sprintf("db open failed: %v", err))
+		}
+		logger.Warn("HUIPAY_SKIP_DB=true: 跳过 DB 初始化，所有依赖 DB 的接口将不可用")
+		dbConn = &db.DB{}
 	}
 
 	// 4. 初始化 Prometheus

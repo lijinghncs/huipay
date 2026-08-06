@@ -49,13 +49,13 @@ export function createApi(opts: ApiClientOptions): AxiosInstance {
         const err = new Error(body.message || 'biz error') as AxiosError<ApiResponse>;
         err.code = body.code as unknown as string;
         err.message = body.message;
-        opts.onError?.?.(err);
+        opts.onError?.(err);
         return Promise.reject(err);
       }
       return body?.data as never;
     },
     (err: AxiosError<ApiResponse>) => {
-      opts.onError?.?.(err);
+      opts.onError?.(err);
       return Promise.reject(err);
     },
   );
