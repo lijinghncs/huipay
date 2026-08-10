@@ -6,5 +6,5 @@ app_name: huipay-backend
 app_env: local
 
 # MySQL 主从 DSN（HUIPAY_MYSQL_MASTER / HUIPAY_MYSQL_SLAVE 可通过环境变量覆盖）
-mysql_master: "huipay:huipay@tcp(127.0.0.1:3306)/huipay_main?charset=utf8mb4&parseTime=True&loc=Local"
+mysql_master: "root:lijing123!@#@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local"
 mysql_slave: ""

@@ -25,6 +25,7 @@ func Load() *Config {
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	v.AddConfigPath("./configs")
+	v.AddConfigPath("./infra/config")
 	v.AddConfigPath("/opt/huipay/config")
 	v.AddConfigPath(".")
 
