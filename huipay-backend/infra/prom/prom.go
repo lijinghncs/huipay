@@ -15,10 +15,10 @@ var (
 	SplitSuccessRate = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "split_success_rate", Help: "分账成功率（0~1）",
 	})
-	ChannelLatencySeconds = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name: "channel_latency_seconds", Help: "通道调用延迟（秒）",
-		Buckets: prometheus.DefBuckets,
-	})
+	ChannelLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:       "channel_latency_seconds", Help: "通道调用延迟（秒）",
+		Buckets:    prometheus.DefBuckets,
+	}, []string{"method", "endpoint"})
 	WalletBalanceMismatch = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "wallet_balance_mismatch_total", Help: "钱包余额不一致计数",
 	})

@@ -12,6 +12,8 @@ export interface ApiClientOptions {
   traceIdGenerator?: () => string;
   /** 自定义错误处理回调（如 Toast） */
   onError?: (err: AxiosError<ApiResponse>) => void;
+  /** 商户号提供函数：非空时自动注入 X-Merchant-Id 请求头 */
+  merchantIdProvider?: () => number;
 }
 
 function createIdempotencyKey(): string {
@@ -37,6 +39,11 @@ export function createApi(opts: ApiClientOptions): AxiosInstance {
     // 简化签名：预留扩展点（实际项目接 MD5/HMAC）
     if (opts.signSecret) {
       cfg.headers['X-Merchant-Sign'] = 'signed-stub';
+    }
+    // 注入商户号头（打通前端 → 后端 MerchantID 链路）
+    if (opts.merchantIdProvider) {
+      const mid = opts.merchantIdProvider();
+      if (mid) cfg.headers['X-Merchant-Id'] = String(mid);
     }
     return cfg;
   });

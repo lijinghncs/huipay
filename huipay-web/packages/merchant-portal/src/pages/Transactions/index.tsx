@@ -1,9 +1,11 @@
 // 交易列表页
 import React from 'react';
 import { Card, Table } from 'antd';
+import { useQuery } from '@tanstack/react-query';
 import { StatusTag } from '@huipay/ui-kit';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import type { Order } from '@huipay/shared';
+import { listOrders } from '../../services/user';
 
 const columns = [
   { title: '订单号', dataIndex: 'order_no', key: 'order_no', width: 200 },
@@ -17,14 +19,19 @@ const columns = [
 ];
 
 export const Transactions: React.FC = () => {
-  // 骨架：硬编码空数据；真实项目 useQuery 拉取
+  const { data, isLoading } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => listOrders({ page: 1, size: 20 }),
+  });
+
   return (
     <Card title="交易列表">
       <Table<Order>
         rowKey="order_no"
         columns={columns}
-        dataSource={[]}
-        pagination={{ pageSize: 20, showSizeChanger: true }}
+        dataSource={data?.items ?? []}
+        loading={isLoading}
+        pagination={{ pageSize: 20, showSizeChanger: true, total: data?.total ?? 0 }}
       />
     </Card>
   );

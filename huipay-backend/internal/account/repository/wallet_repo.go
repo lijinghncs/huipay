@@ -31,14 +31,14 @@ func (WalletModel) TableName() string { return "t_wallet" }
 // JournalEntryModel 账本流水 GORM 模型。
 type JournalEntryModel struct {
 	ID             string    `gorm:"column:id;primaryKey;size:20"`
-	WalletID       uint64    `gorm:"column:wallet_id;not null"`
-	Direction      string    `gorm:"column:direction;type:ENUM('DEBIT','CREDIT');not null"`
+	WalletID       uint64    `gorm:"column:wallet_id;not null;uniqueIndex:uk_idem"`
+	Direction      string    `gorm:"column:direction;size:8;not null"`
 	Amount         int64     `gorm:"column:amount;not null"`
 	BalanceAfter   int64     `gorm:"column:balance_after;not null"`
 	BizType        string    `gorm:"column:biz_type;size:32;not null"`
 	BizID          string    `gorm:"column:biz_id;size:64;not null"`
 	CounterpartyID *uint64   `gorm:"column:counterparty_id"`
-	IdempotencyKey string    `gorm:"column:idempotency_key;size:64;not null"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:64;not null;uniqueIndex:uk_idem"`
 	TraceID        string    `gorm:"column:trace_id;size:64"`
 	Remark         string    `gorm:"column:remark;size:255"`
 	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
@@ -91,6 +91,42 @@ func (r *WalletRepo) UpdateBalance(ctx context.Context, id uint64, version int64
 
 // DB 暴露读主库。
 func (r *WalletRepo) DB() *gorm.DB { return r.db }
+
+// GetByIDTx 在指定事务内按 ID 查询钱包。
+func (r *WalletRepo) GetByIDTx(ctx context.Context, tx *gorm.DB, id uint64) (*WalletModel, error) {
+	var m WalletModel
+	if err := tx.WithContext(ctx).First(&m, id).Error; err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetByEntityTx 在指定事务内按主体查询钱包。
+func (r *WalletRepo) GetByEntityTx(ctx context.Context, tx *gorm.DB, entityID uint64) (*WalletModel, error) {
+	var m WalletModel
+	if err := tx.WithContext(ctx).Where("entity_id = ?", entityID).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// UpdateBalanceTx 在指定事务内原子更新余额（带乐观锁）。
+func (r *WalletRepo) UpdateBalanceTx(ctx context.Context, tx *gorm.DB, id uint64, version int64, newBalance int64) error {
+	res := tx.WithContext(ctx).
+		Model(&WalletModel{}).
+		Where("id = ? AND version = ?", id, version).
+		Updates(map[string]any{"balance": newBalance, "version": version + 1})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("optimistic lock conflict")
+	}
+	return nil
+}
 
 // JournalRepo 账本流水仓储。
 type JournalRepo struct{ db *gorm.DB }

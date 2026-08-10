@@ -13,22 +13,32 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/huipay/huipay-backend/infra/config"
 	"github.com/huipay/huipay-backend/infra/db"
 	"github.com/huipay/huipay-backend/infra/errs"
+	"github.com/huipay/huipay-backend/infra/idem"
 	"github.com/huipay/huipay-backend/infra/obs"
 	"github.com/huipay/huipay-backend/infra/prom"
 
 	orderhandler "github.com/huipay/huipay-backend/internal/order/handler"
 	orderservice "github.com/huipay/huipay-backend/internal/order/service"
+	orderscheduler "github.com/huipay/huipay-backend/internal/order/scheduler"
 
 	accounthandler "github.com/huipay/huipay-backend/internal/account/handler"
 	accountrepo "github.com/huipay/huipay-backend/internal/account/repository"
 	accountservice "github.com/huipay/huipay-backend/internal/account/service"
+	"github.com/huipay/huipay-backend/internal/account/bootstrap"
 	"github.com/huipay/huipay-backend/internal/account/ledger"
 
+	"github.com/huipay/huipay-backend/internal/payment/channel"
+	notifyhandler "github.com/huipay/huipay-backend/internal/payment/notify"
 	paymentrouter "github.com/huipay/huipay-backend/internal/payment/router"
+	"github.com/huipay/huipay-backend/internal/payment/channel/wechat"
+	reconcilesvc "github.com/huipay/huipay-backend/internal/payment/reconcile"
+	reconcilesched "github.com/huipay/huipay-backend/internal/payment/reconcile/scheduler"
+	"github.com/huipay/huipay-backend/internal/middleware"
 
 	splithandler "github.com/huipay/huipay-backend/internal/split/handler"
 	splitservice "github.com/huipay/huipay-backend/internal/split/service"
@@ -65,6 +75,44 @@ func main() {
 	paymentRouter := paymentrouter.NewDefaultRouter()
 	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter)
 
+	// 微信通道适配器（enabled 时初始化；失败仅告警，不阻断服务启动）
+	var wxAdapter channel.Adapter
+	if cfg.WeChat.Enabled {
+		wx, err := wechat.New(cfg.WeChat)
+		if err != nil {
+			logger.Error("wechat channel init fail", zap.Error(err))
+		} else {
+			wxAdapter = wx
+		}
+	}
+	if wxAdapter != nil {
+		paymentRouter.Register(wxAdapter)
+	}
+
+	// 对账下载器（微信通道启用且配置完整时初始化；失败仅告警）
+	var billDownloader *reconcilesvc.Downloader
+	if cfg.WeChat.Enabled {
+		bd, bdErr := reconcilesvc.NewDownloader(cfg.WeChat)
+		if bdErr != nil {
+			logger.Error("reconcile downloader init fail", zap.Error(bdErr))
+		} else {
+			billDownloader = bd
+		}
+	}
+
+	idemStore := idem.NewMySQLStore(dbConn.Master)
+
+	// 启动时初始化通道在途资金户（entity + wallet），返回微信结算户 wallet_id 供回调入账
+	settlementWalletID := uint64(0)
+	if dbConn.Master != nil {
+		wid, seedErr := bootstrap.SeedChannelSettlementWallets(context.Background(), dbConn.Master, accountSvc, logger)
+		if seedErr != nil {
+			logger.Warn("seed channel settlement wallets fail", zap.Error(seedErr))
+		} else {
+			settlementWalletID = wid
+		}
+	}
+
 	ruleEngine := splitrule.NewEngine()
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, logger)
 	splitSvc := splitservice.NewService(ruleEngine, splitExec, accountSvc, logger)
@@ -76,17 +124,25 @@ func main() {
 	r.Use(obs.GinTrace())
 	r.Use(obs.GinAccessLog(logger))
 	r.Use(errs.GinErrorHandler(logger))
+	r.Use(middleware.MerchantID())
 
 	// 7. 注册路由
 	orderH := orderhandler.New(orderSvc, logger)
 	accountH := accounthandler.New(accountSvc, logger)
 	splitH := splithandler.New(splitSvc, logger)
+	notifyH := notifyhandler.New(wxAdapter, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/checkout/precreate", orderH.Precreate)
+		v1.GET("/checkout/list", orderH.List)
+		v1.POST("/checkout/embed-info", orderH.EmbedInfo)
 		v1.GET("/checkout/:order_no", orderH.Get)
 		v1.POST("/checkout/:order_no/refund", orderH.Refund)
+		v1.POST("/checkout/:order_no/pay", orderH.Pay)
+
+		v1.POST("/notify/wechat", notifyH.HandleWechat)
+		v1.POST("/notify/wechat/refund", notifyH.HandleWechatRefund)
 
 		v1.GET("/wallets/:entity_id", accountH.GetWallet)
 		v1.GET("/wallets/:entity_id/entries", accountH.ListEntries)
@@ -100,7 +156,16 @@ func main() {
 	})
 	r.GET("/metrics", prom.Handler())
 
-	// 8. 启动服务并优雅退出
+	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账）
+	if dbConn.Master != nil {
+		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, 30*time.Second, logger).Start(context.Background())
+		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
+		if billDownloader != nil {
+			go reconcilesched.StartDailyReconcile(context.Background(), billDownloader, dbConn.Master, logger)
+		}
+	}
+
+	// 9. 启动服务并优雅退出
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
 		Handler:      r,

@@ -54,7 +54,7 @@ func (s *MySQLStore) Save(ctx context.Context, r *Record) error {
 func (s *MySQLStore) Get(ctx context.Context, scope, key string) (*Record, error) {
 	var r Record
 	if err := s.db.WithContext(ctx).
-		Where("Record.scope = ? AND Record.idempotency_key = ?", scope, key).
+		Where("scope = ? AND idempotency_key = ?", scope, key).
 		First(&r).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

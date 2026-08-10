@@ -54,3 +54,34 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, orderNo, status, splitStat
 		Where("order_no = ?", orderNo).
 		Updates(map[string]any{"status": status, "split_status": splitStatus}).Error
 }
+
+// ListByMerchant 按商户号分页查询订单（created_at DESC）。
+// status 为空表示不过滤状态。返回订单列表与总数。
+func (r *OrderRepo) ListByMerchant(ctx context.Context, merchantID uint64, status string, page, size int) ([]model.OrderModel, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size <= 0 || size > 100 {
+		size = 20
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.OrderModel{})
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+
+	var total int64
+	if err := q.Where("merchant_id = ?", merchantID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []model.OrderModel
+	if err := q.Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Offset((page - 1) * size).
+		Limit(size).
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}

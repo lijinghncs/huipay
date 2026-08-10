@@ -11,6 +11,8 @@ import { App } from './App';
 // 初始化 API 客户端
 createApi({
   baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  // 商家工作台：固定商户号（开发模式；生产由登录态注入）
+  merchantIdProvider: () => 10001,
 });
 
 const queryClient = new QueryClient({

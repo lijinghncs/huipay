@@ -41,6 +41,12 @@ func (a *Adapter) Split(ctx context.Context, req *channel.SplitRequest) (*channe
 func (a *Adapter) ReturnSplit(ctx context.Context, req *channel.ReturnSplitRequest) error { return nil }
 func (a *Adapter) FinishSplit(ctx context.Context, req *channel.FinishSplitRequest) error  { return nil }
 
+func (a *Adapter) CloseOrder(ctx context.Context, orderNo string) error { return nil }
+
+func (a *Adapter) VerifyAndDecrypt(ctx context.Context, raw []byte, headers map[string]string) ([]byte, error) {
+	return raw, nil
+}
+
 func (a *Adapter) VerifyNotify(ctx context.Context, raw []byte, headers map[string]string) (*channel.NotifyPayload, error) {
 	// TODO 接入支付宝异步通知验签
 	return &channel.NotifyPayload{Raw: raw}, nil

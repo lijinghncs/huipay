@@ -11,6 +11,8 @@ import './styles/global.css';
 
 createApi({
   baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  // 管理后台无商户身份，返回 0 表示不注入 X-Merchant-Id
+  merchantIdProvider: () => 0,
 });
 
 const queryClient = new QueryClient({

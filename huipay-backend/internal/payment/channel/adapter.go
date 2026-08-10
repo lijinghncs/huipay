@@ -7,6 +7,15 @@ import (
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 )
 
+// PayType 预下单支付方式/场景。
+type PayType string
+
+const (
+	PayTypeNative PayType = "NATIVE" // 扫码支付（PC/收银台，返回 code_url）
+	PayTypeH5     PayType = "H5"     // 移动端网页支付（返回 h5_url 跳转）
+	PayTypeJSAPI  PayType = "JSAPI"  // 微信内拉起（返回 prepay_id）
+)
+
 // CreatePaymentRequest 预下单请求。
 type CreatePaymentRequest struct {
 	OrderNo    string
@@ -14,6 +23,8 @@ type CreatePaymentRequest struct {
 	Subject    string
 	NotifyURL  string
 	ExpireSecs int
+	PayType    PayType // 支付场景，默认 NATIVE
+	OpenID     string  // JSAPI 场景必填
 }
 
 // CreatePaymentResponse 预下单响应。
@@ -21,6 +32,7 @@ type CreatePaymentResponse struct {
 	ChannelTradeNo string
 	PayURL         string
 	QRCode         string
+	PrepayID       string // JSAPI 预支付单号，用于前端拉起
 }
 
 // PaymentStatus 支付状态。
@@ -77,6 +89,7 @@ type FinishSplitRequest struct {
 type NotifyPayload struct {
 	OrderNo        string
 	ChannelTradeNo string
+	NotifyID       string // 微信回调唯一 notify_id（幂等键用）
 	Paid           bool
 	PaidAmount     int64
 	Raw            []byte
@@ -91,5 +104,8 @@ type Adapter interface {
 	Split(ctx context.Context, req *SplitRequest) (*SplitResponse, error)
 	ReturnSplit(ctx context.Context, req *ReturnSplitRequest) error
 	FinishSplit(ctx context.Context, req *FinishSplitRequest) error
+	CloseOrder(ctx context.Context, orderNo string) error
 	VerifyNotify(ctx context.Context, raw []byte, headers map[string]string) (*NotifyPayload, error)
+	// VerifyAndDecrypt 仅验签 + 解密，返回明文（供退款等非交易回调复用）。
+	VerifyAndDecrypt(ctx context.Context, raw []byte, headers map[string]string) ([]byte, error)
 }

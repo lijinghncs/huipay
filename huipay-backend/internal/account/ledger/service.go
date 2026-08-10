@@ -13,6 +13,7 @@ import (
 
 	"github.com/huipay/huipay-backend/infra/prom"
 	"github.com/huipay/huipay-backend/internal/account/repository"
+	"github.com/huipay/huipay-backend/internal/domain/vo"
 )
 
 // EntryInput 单条流水输入。
@@ -130,4 +131,105 @@ func (s *Service) appendWithTx(ctx context.Context, tx *gorm.DB, in *EntryInput)
 		Remark:         in.Remark,
 	}
 	return tx.WithContext(ctx).Create(m).Error
+}
+
+// CreditFromSettlementRequest 渠道在途资金 → 商户入账（外部虚拟源户 → 商户备付金）。
+type CreditFromSettlementRequest struct {
+	SettlementWalletID uint64        // 通道在途资金户 wallet_id
+	ToEntityID         uint64        // 商户 entity_id
+	ToEntityType       vo.EntityType // 商户主体类型
+	Amount             int64
+	BizType            string // "PAYMENT"
+	BizID              string // 订单号
+	TraceID            string
+}
+
+// CreditFromSettlement 单边入账：通道在途资金户（DEBIT 流出）→ 商户备付金（CREDIT 流入）。
+// 单事务内保证借贷平衡；幂等键命中时重复调用不写流水。
+// 按项目约定：DEBIT=资金流出（余额减少）、CREDIT=资金流入（余额增加）。
+func (s *Service) CreditFromSettlement(ctx context.Context, req *CreditFromSettlementRequest) error {
+	if req.Amount <= 0 {
+		return errors.New("amount must be positive")
+	}
+	idemKey := fmt.Sprintf("%s:%s:%d:%d", req.BizType, req.BizID, req.SettlementWalletID, req.ToEntityID)
+
+	return s.journalRepo.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1) 结算户扣减
+		settle, err := s.walletRepo.GetByIDTx(ctx, tx, req.SettlementWalletID)
+		if err != nil {
+			return err
+		}
+		if settle.Balance < req.Amount {
+			prom.WalletBalanceMismatch.Inc()
+			return fmt.Errorf("insufficient settlement balance: wallet=%d have=%d need=%d", settle.ID, settle.Balance, req.Amount)
+		}
+		if err := s.walletRepo.UpdateBalanceTx(ctx, tx, settle.ID, settle.Version, settle.Balance-req.Amount); err != nil {
+			return err
+		}
+		// 2) 结算户 DEBIT 流水（资金流出）
+		if err := s.appendWithTx(ctx, tx, &EntryInput{
+			WalletID:       settle.ID,
+			Direction:      "DEBIT",
+			Amount:         req.Amount,
+			BalanceAfter:   settle.Balance - req.Amount,
+			BizType:        req.BizType,
+			BizID:          req.BizID,
+			CounterpartyID: &req.ToEntityID,
+			IdempotencyKey: idemKey,
+			TraceID:        req.TraceID,
+			Remark:         "settlement debit",
+		}); err != nil {
+			return err
+		}
+
+		// 3) 确保商户钱包存在
+		merchant, err := s.ensureWalletTx(ctx, tx, req.ToEntityID, req.ToEntityType)
+		if err != nil {
+			return err
+		}
+		// 4) 商户入账
+		if err := s.walletRepo.UpdateBalanceTx(ctx, tx, merchant.ID, merchant.Version, merchant.Balance+req.Amount); err != nil {
+			return err
+		}
+		// 5) 商户 CREDIT 流水（资金流入）
+		return s.appendWithTx(ctx, tx, &EntryInput{
+			WalletID:       merchant.ID,
+			Direction:      "CREDIT",
+			Amount:         req.Amount,
+			BalanceAfter:   merchant.Balance + req.Amount,
+			BizType:        req.BizType,
+			BizID:          req.BizID,
+			CounterpartyID: &req.SettlementWalletID,
+			IdempotencyKey: idemKey + ":c",
+			TraceID:        req.TraceID,
+			Remark:         "settlement credit",
+		})
+	})
+}
+
+// ensureWalletTx 在事务内确保主体钱包存在（创建或返回已存在）。
+func (s *Service) ensureWalletTx(ctx context.Context, tx *gorm.DB, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
+	w, err := s.walletRepo.GetByEntityTx(ctx, tx, entityID)
+	if err != nil {
+		return nil, err
+	}
+	if w != nil {
+		return w, nil
+	}
+	m := &repository.WalletModel{
+		WalletNo:   "W" + uuid.NewString()[:16],
+		EntityID:   entityID,
+		EntityType: string(entityType),
+		Currency:   "CNY",
+		Status:     1,
+	}
+	if err := tx.WithContext(ctx).Create(m).Error; err != nil {
+		// 并发创建时唯一索引冲突 → 重新查
+		w2, _ := s.walletRepo.GetByEntity(ctx, entityID)
+		if w2 != nil {
+			return w2, nil
+		}
+		return nil, fmt.Errorf("create wallet: %w", err)
+	}
+	return m, nil
 }

@@ -8,3 +8,24 @@ app_env: local
 # MySQL 主从 DSN（HUIPAY_MYSQL_MASTER / HUIPAY_MYSQL_SLAVE 可通过环境变量覆盖）
 mysql_master: "root:lijing123!@#@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local"
 mysql_slave: ""
+
+# 微信支付 V3 配置。
+# 密钥类字段（api_v3_key / merchant_private_key / platform_public_key）建议通过
+# HUIPAY_WECHAT_* 环境变量注入，示例：
+#   HUIPAY_WECHAT_ENABLED=true
+#   HUIPAY_WECHAT_MCHID=1900000000
+#   HUIPAY_WECHAT_APPID=wx8888888888888888
+#   HUIPAY_WECHAT_API_V3_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+#   HUIPAY_WECHAT_MERCHANT_SERIAL_NO=xxxxxxxxxxxxxxxx
+#   HUIPAY_WECHAT_MERCHANT_PRIVATE_KEY=$(cat apiclient_key.pem)
+wechat:
+  enabled: false
+  mchid: ""
+  appid: ""
+  api_v3_key: ""
+  merchant_serial_no: ""
+  merchant_private_key: ""
+  platform_serial_no: ""
+  platform_public_key: ""
+  notify_base_url: "https://checkout.huipay.cn"
+  base_url: "https://api.mch.weixin.qq.com"

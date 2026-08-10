@@ -24,6 +24,7 @@ type OrderModel struct {
 	Status          string         `gorm:"column:status;size:16;not null;default:CREATED"`
 	ExpireAt        *time.Time     `gorm:"column:expire_at"`
 	PaidAt          *time.Time     `gorm:"column:paid_at"`
+	ClosedAt        *time.Time     `gorm:"column:closed_at"`
 	CreatedAt       time.Time      `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt       time.Time      `gorm:"column:updated_at;autoUpdateTime"`
 	DeletedAt       *time.Time     `gorm:"column:deleted_at;index"`

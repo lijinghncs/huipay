@@ -3,16 +3,38 @@ import React from 'react';
 import { Button, Radio, Space, Typography, Divider } from 'antd';
 import { useCheckoutUI } from '../hooks/useCheckoutUI';
 import { useCheckout } from '../hooks/useCheckout';
+import { usePay } from '../hooks/usePay';
 import { formatCents } from '@huipay/shared/utils';
-import type { CheckoutProps } from '../types';
+import type { CheckoutProps, PayType } from '../types';
 
 const { Text, Title } = Typography;
 
+const PAY_TYPES: { value: PayType; label: string }[] = [
+  { value: 'NATIVE', label: '扫码支付' },
+  { value: 'H5', label: 'H5 网页支付' },
+  { value: 'JSAPI', label: '微信内拉起' },
+];
+
 /** 收银台组件（Component 形态）。 */
 export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
-  const { orderNo, channels, onChannelChange, onSuccess, onError, amount, discount = 0 } = props;
+  const {
+    orderNo,
+    channels,
+    onChannelChange,
+    onPayTypeChange,
+    onSuccess,
+    onError,
+    onJSAPIReady,
+    amount,
+    discount = 0,
+    openId,
+    defaultPayType = 'NATIVE',
+    showPayTypeSelector = true,
+  } = props;
   const { order, isPaid, finalAmount } = useCheckout(props);
-  const { selectedChannel, setSelectedChannel, isProcessing, setProcessing } = useCheckoutUI();
+  const { selectedChannel, setSelectedChannel, selectedPayType, setSelectedPayType, isProcessing, setProcessing } =
+    useCheckoutUI();
+  const payMutation = usePay();
 
   React.useEffect(() => {
     if (isPaid) {
@@ -24,21 +46,31 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
     if (selectedChannel) onChannelChange?.(selectedChannel);
   }, [selectedChannel, onChannelChange]);
 
+  React.useEffect(() => {
+    onPayTypeChange?.(selectedPayType);
+  }, [selectedPayType, onPayTypeChange]);
+
   const handlePay = async () => {
     if (!selectedChannel) {
       onError?.(new Error('请选择支付通道'));
       return;
     }
     setProcessing(true);
-    try {
-      // 真实项目：调用 channel.CreatePayment，跳转到支付 URL / 拉起 SDK
-      // 骨架阶段：仅模拟
-      await new Promise((r) => setTimeout(r, 800));
-    } catch (e) {
-      onError?.(e as Error);
-    } finally {
-      setProcessing(false);
-    }
+    payMutation.mutate(
+      { orderNo, payType: selectedPayType, openId },
+      {
+        onSuccess: (resp) => {
+          if (resp.pay_url) {
+            window.location.href = resp.pay_url; // H5 跳转
+          } else if (resp.prepay_id) {
+            onJSAPIReady?.(resp.prepay_id); // JSAPI 拉起（前端负责 WeixinJSBridge）
+          }
+          // qr_code 由 useOrder 轮询触发 onSuccess
+        },
+        onError: (err) => onError?.(err),
+        onSettled: () => setProcessing(false),
+      },
+    );
   };
 
   return (
@@ -72,6 +104,28 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
             ))}
           </Radio.Group>
         </div>
+        {showPayTypeSelector && (
+          <div>
+            <Text strong>选择支付场景</Text>
+            <Radio.Group
+              value={selectedPayType}
+              onChange={(e) => setSelectedPayType(e.target.value as PayType)}
+              defaultValue={defaultPayType}
+              style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}
+            >
+              {PAY_TYPES.map((p) => {
+                // JSAPI 单选项仅在提供了 openId 时显示
+                const disabled = p.value === 'JSAPI' && !openId;
+                return (
+                  <Radio key={p.value} value={p.value} disabled={disabled}>
+                    {p.label}
+                    {p.value === 'JSAPI' && !openId && '（需 openId）'}
+                  </Radio>
+                );
+              })}
+            </Radio.Group>
+          </div>
+        )}
         <Button
           type="primary"
           size="large"
