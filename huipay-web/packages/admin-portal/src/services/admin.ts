@@ -35,6 +35,8 @@ export interface OnboardRequest {
   bank_name?: string;
   contact_name?: string;
   contact_phone?: string;
+  login_phone?: string; // 登录手机号（可选）
+  login_password?: string; // 初始登录密码（可选，>=6 位）
   wechat_config?: MerchantWechatConfigInput; // 微信支付配置（敏感字段加密入库）
 }
 
@@ -107,6 +109,11 @@ export async function updateMerchantWechatConfig(
   cfg: MerchantWechatConfigInput,
 ): Promise<MerchantWechatConfigView | null> {
   return put<MerchantWechatConfigView | null>(`/v1/admin/merchants/${id}/wechat-config`, { wechat_config: cfg });
+}
+
+/** 设置 / 重置商户登录手机号与密码 */
+export async function setMerchantLoginPassword(id: number, loginPhone: string, password: string): Promise<Merchant> {
+  return post<Merchant>(`/v1/admin/merchants/${id}/login-password`, { login_phone: loginPhone, password });
 }
 
 export interface MerchantDetail {

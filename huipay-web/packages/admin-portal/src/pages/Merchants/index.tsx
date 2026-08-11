@@ -24,7 +24,7 @@ import {
   Collapse,
   Switch,
 } from 'antd';
-import { EyeOutlined, PlusOutlined, SearchOutlined, ReloadOutlined, EditOutlined, SettingOutlined } from '@ant-design/icons';
+import { EyeOutlined, PlusOutlined, SearchOutlined, ReloadOutlined, EditOutlined, SettingOutlined, LockOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import {
@@ -36,6 +36,7 @@ import {
   updateMerchantWechatConfig,
   updateMerchant,
   setMerchantStatus,
+  setMerchantLoginPassword,
   type Merchant,
   type MerchantDetail,
   type OnboardRequest,
@@ -166,6 +167,19 @@ export const Merchants: React.FC = () => {
   const [editForm] = Form.useForm();
   const [wcId, setWcId] = useState<number | null>(null);
   const [wcForm] = Form.useForm();
+  const [pwId, setPwId] = useState<number | null>(null);
+  const [pwForm] = Form.useForm();
+
+  const setPassword = useMutation({
+    mutationFn: ({ id, phone, password }: { id: number; phone: string; password: string }) =>
+      setMerchantLoginPassword(id, phone, password),
+    onSuccess: () => {
+      message.success('登录手机号/密码已设置');
+      setPwId(null);
+      pwForm.resetFields();
+    },
+    onError: (err) => message.error(`设置失败：${err.message}`),
+  });
 
   const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['merchants', { keyword, status, page, pageSize }],
@@ -342,6 +356,11 @@ export const Merchants: React.FC = () => {
               微信配置
             </Button>
           </Tooltip>
+          <Tooltip title="设置登录手机号与密码（商户工作台登录用）">
+            <Button type="link" size="small" icon={<LockOutlined />} onClick={() => { setPwId(r.id); pwForm.resetFields(); }}>
+              登录密码
+            </Button>
+          </Tooltip>
         </Space>
       ),
     },
@@ -483,6 +502,41 @@ export const Merchants: React.FC = () => {
       >
         <Form form={editForm} layout="vertical" style={{ marginTop: 16 }}>
           <MerchantFormFields />
+        </Form>
+      </Modal>
+
+      {/* 设置登录手机号与密码（商户工作台登录） */}
+      <Modal
+        title={`设置登录密码${pwId ? ` · 商户 ${pwId}` : ''}`}
+        open={!!pwId}
+        onCancel={() => { setPwId(null); pwForm.resetFields(); }}
+        onOk={() => {
+          pwForm
+            .validateFields()
+            .then((values: { phone: string; password: string }) =>
+              pwId && setPassword.mutate({ id: pwId, phone: values.phone, password: values.password }),
+            )
+            .catch(() => undefined);
+        }}
+        confirmLoading={setPassword.isPending}
+        destroyOnClose
+      >
+        <Form form={pwForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="商户使用该手机号 + 密码登录商家工作台；密码至少 6 位。"
+            style={{ marginBottom: 8 }}
+          />
+          <Form.Item name="phone" label="登录手机号" rules={[{ required: true, message: '请输入登录手机号' }]}>
+            <Input placeholder="如 13800000000" maxLength={32} />
+          </Form.Item>
+          <Form.Item name="password" label="登录密码" rules={[
+            { required: true, message: '请输入登录密码' },
+            { min: 6, message: '密码至少 6 位' },
+          ]}>
+            <Input.Password placeholder="至少 6 位" />
+          </Form.Item>
         </Form>
       </Modal>
 
