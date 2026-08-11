@@ -2,6 +2,7 @@
 import React from 'react';
 import { Button, Card, DatePicker, Input, Select, Space, Table } from 'antd';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Money } from '@huipay/ui-kit';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import type { JournalEntry } from '@huipay/shared';
@@ -15,7 +16,14 @@ const entryColumns = [
   { title: '金额', dataIndex: 'amount', key: 'amount', render: (v: number) => formatCents(v) },
   { title: '余额', dataIndex: 'balance_after', key: 'balance_after', render: (v: number) => formatCents(v) },
   { title: '业务类型', dataIndex: 'biz_type', key: 'biz_type' },
-  { title: '业务单号', dataIndex: 'biz_id', key: 'biz_id', width: 180 },
+  {
+    title: '业务单号',
+    dataIndex: 'biz_id',
+    key: 'biz_id',
+    width: 180,
+    render: (v: string, r: JournalEntry) =>
+      r.biz_type === 'PAYMENT' ? <Link to={`/transactions?order_no=${encodeURIComponent(v)}`}>{v}</Link> : v,
+  },
   { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => formatDateTime(v) },
 ];
 
