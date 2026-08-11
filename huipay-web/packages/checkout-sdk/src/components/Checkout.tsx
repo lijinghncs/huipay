@@ -1,6 +1,6 @@
 // 收银台组件式集成入口：组件式（Component）形态
 import React from 'react';
-import { Button, Radio, Space, Typography, Divider } from 'antd';
+import { Alert, Button, Radio, Space, Typography, Divider, QRCode } from 'antd';
 import { useCheckoutUI } from '../hooks/useCheckoutUI';
 import { useCheckout } from '../hooks/useCheckout';
 import { usePay } from '../hooks/usePay';
@@ -54,10 +54,22 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
     defaultPayType = 'NATIVE',
     showPayTypeSelector = true,
   } = props;
-  const { order, isPaid, finalAmount } = useCheckout(props);
+  const { order, isPaid, channelPaid, finalAmount } = useCheckout(props);
   const { selectedChannel, setSelectedChannel, selectedPayType, setSelectedPayType, isProcessing, setProcessing } =
     useCheckoutUI();
   const payMutation = usePay();
+  const [qrCode, setQrCode] = React.useState('');
+  const [payError, setPayError] = React.useState('');
+  const [now, setNow] = React.useState(Date.now());
+
+  // 支付中倒计时（每秒刷新，用于展示剩余支付时间）
+  React.useEffect(() => {
+    if (isPaid || !order?.expire_at) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isPaid, order?.expire_at]);
+
+  const remainSecs = order?.expire_at ? Math.max(0, Math.ceil((new Date(order.expire_at).getTime() - now) / 1000)) : 0;
 
   // 未选通道时自动选中第一个可用通道（码牌扫码收款默认即可支付，无需手动选择）
   React.useEffect(() => {
@@ -69,6 +81,7 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
 
   React.useEffect(() => {
     if (isPaid) {
+      setQrCode('');
       onSuccess?.({ orderNo, channel: order?.channel ?? '' });
     }
   }, [isPaid, orderNo, order?.channel, onSuccess]);
@@ -87,6 +100,7 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
       return;
     }
     setProcessing(true);
+    setPayError('');
     payMutation.mutate(
       { orderNo, payType: selectedPayType, openId },
       {
@@ -102,10 +116,14 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
             );
           } else if (resp.prepay_id) {
             onJSAPIReady?.(resp.prepay_id); // 兼容：外部自行拉起
+          } else if (resp.qr_code) {
+            setQrCode(resp.qr_code); // NATIVE：展示二维码，由轮询命中 PAID 触发成功
           }
-          // qr_code 由 useOrder 轮询触发 onSuccess
         },
-        onError: (err) => onError?.(err),
+        onError: (err) => {
+          setPayError(err.message);
+          onError?.(err);
+        },
         onSettled: () => setProcessing(false),
       },
     );
@@ -116,6 +134,11 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
       <Title level={4} style={{ marginTop: 0 }}>
         订单 {orderNo}
       </Title>
+      {!isPaid && !payError && remainSecs > 0 && (
+        <div style={{ textAlign: 'right', color: remainSecs <= 60 ? '#fa541c' : '#8a94a6', marginBottom: 8 }}>
+          剩余支付时间 {Math.floor(remainSecs / 60)} 分 {remainSecs % 60} 秒
+        </div>
+      )}
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <div>
           <Text type="secondary">订单金额</Text>
@@ -128,6 +151,23 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
           </div>
         )}
         <Divider style={{ margin: '8px 0' }} />
+        {payError && (
+          <Alert type="error" showIcon message={payError} closable onClose={() => setPayError('')} />
+        )}
+        {order?.status === 'CLOSED' && !isPaid && (
+          <Alert type="warning" showIcon message="订单已关闭或超时，请重新创建订单" />
+        )}
+        {channelPaid && !isPaid && (
+          <Alert type="info" showIcon message="支付处理中，请稍候…（已收到支付结果，正在确认到账）" />
+        )}
+        {qrCode && !isPaid && (
+          <div style={{ textAlign: 'center', padding: 8 }}>
+            <QRCode value={qrCode} size={220} />
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">请使用微信扫码支付</Text>
+            </div>
+          </div>
+        )}
         <div>
           <Text strong>选择支付方式</Text>
           <Radio.Group

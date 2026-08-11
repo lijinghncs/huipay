@@ -7,9 +7,10 @@ import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HuiPayCheckout } from '../components/Checkout';
 import { AmountInput } from '../components/AmountInput';
+import { PaymentResult } from '../components/PaymentResult';
 import { useOrder } from '../hooks/useCheckout';
 import { createApi } from '@huipay/shared/api-client';
-import { ensureWechatOpenId, readOpenId } from '../utils/wechatOAuth';
+import { ensureWechatOpenId, isWeixinBrowser, readOpenId } from '../utils/wechatOAuth';
 import '../styles/global.css';
 
 const queryClient = new QueryClient();
@@ -24,6 +25,7 @@ function App() {
   const orderNo = params.get('order') ?? '';
   const code = params.get('code') ?? '';
   const [createdOrder, setCreatedOrder] = React.useState('');
+  const [payError, setPayError] = React.useState('');
 
   // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
   if (ensureWechatOpenId(apiBase)) {
@@ -42,7 +44,43 @@ function App() {
     );
   }
 
-  const { data: order, isLoading } = useOrder(orderNo || createdOrder, !!(orderNo || createdOrder));
+  const activeOrderNo = orderNo || createdOrder;
+  const { data: order, isLoading } = useOrder(activeOrderNo, !!activeOrderNo);
+
+  // 支付结果页：成功 / 已关闭
+  if (order?.status === 'PAID') {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <PaymentResult
+          type="success"
+          orderNo={order.order_no}
+          amount={order.paid_amount || order.amount}
+          paidAt={order.paid_at}
+        />
+      </QueryClientProvider>
+    );
+  }
+  if (order?.status === 'CLOSED') {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <PaymentResult
+          type="closed"
+          orderNo={order.order_no}
+          onRetry={code ? () => (window.location.href = `/h5?code=${code}`) : undefined}
+          retryText="重新扫码收款"
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  // 支付失败：展示失败页，重试回到收银台
+  if (payError) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <PaymentResult type="failed" message={payError} onRetry={() => setPayError('')} />
+      </QueryClientProvider>
+    );
+  }
 
   // 若订单已带 pay_url 且为 H5 场景，自动跳转微信支付
   React.useEffect(() => {
@@ -66,7 +104,15 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div style={{ minHeight: '100vh', background: '#f6f7fb' }}>
-        <HuiPayCheckout orderNo={orderNo || createdOrder} channels={channels} amount={amount} discount={discount} openId={openid} />
+        <HuiPayCheckout
+          orderNo={activeOrderNo}
+          channels={channels}
+          amount={amount}
+          discount={discount}
+          openId={openid}
+          defaultPayType={code ? (isWeixinBrowser() ? 'JSAPI' : 'H5') : 'NATIVE'}
+          onError={(e) => setPayError(e.message)}
+        />
       </div>
     </QueryClientProvider>
   );

@@ -20,6 +20,7 @@ export interface Order {
   order_no: string;
   merchant_order_no: string;
   merchant_id: number;
+  code_id?: string;
   amount: number;
   paid_amount: number;
   coupon_discount: number;
@@ -27,8 +28,21 @@ export interface Order {
   channel_trade_no?: string;
   split_status: SplitStatus;
   status: OrderStatus;
+  expire_at?: string;
+  paid_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+/** 主动查询支付结果（只读，后端不更新本地订单） */
+export interface QueryResult {
+  order_no: string;
+  local_status: string;
+  paid: boolean;
+  paid_amount: number;
+  channel_trade_no?: string;
+  channel?: ChannelCode;
+  paid_at?: number;
 }
 
 /** 预下单请求 */

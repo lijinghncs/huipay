@@ -67,7 +67,9 @@ export const AmountInput: React.FC<{ code: string; onCreated: (orderNo: string) 
       </Button>
       {mutation.isError && (
         <Text type="danger" style={{ display: 'block', marginTop: 8 }}>
-          {(mutation.error as Error)?.message ?? '创建订单失败，请重试'}
+          {/not found|disabled/i.test((mutation.error as Error)?.message ?? '')
+            ? '该收款码不存在或已停用'
+            : ((mutation.error as Error)?.message ?? '创建订单失败，请重试')}
         </Text>
       )}
     </div>

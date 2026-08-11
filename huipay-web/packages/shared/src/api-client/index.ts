@@ -14,6 +14,8 @@ export interface ApiClientOptions {
   onError?: (err: AxiosError<ApiResponse>) => void;
   /** 商户号提供函数：非空时自动注入 X-Merchant-Id 请求头 */
   merchantIdProvider?: () => number;
+  /** 登录 token 提供函数：非空时自动注入 Authorization: Bearer <token> */
+  tokenProvider?: () => string;
 }
 
 function createIdempotencyKey(): string {
@@ -45,6 +47,9 @@ export function createApi(opts: ApiClientOptions): AxiosInstance {
       const mid = opts.merchantIdProvider();
       if (mid) cfg.headers['X-Merchant-Id'] = String(mid);
     }
+    // 登录态：Bearer token 优先（后端中间件优先解析 token）
+    const token = opts.tokenProvider?.();
+    if (token) cfg.headers['Authorization'] = `Bearer ${token}`;
     return cfg;
   });
 
