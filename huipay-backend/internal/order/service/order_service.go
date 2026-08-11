@@ -60,6 +60,7 @@ type PayResponse struct {
 	PayURL   string          `json:"pay_url,omitempty"`   // H5 跳转地址
 	QRCode   string          `json:"qr_code,omitempty"`   // Native 扫码内容
 	PrepayID string          `json:"prepay_id,omitempty"` // JSAPI 预支付单号
+	JSAPI    *channel.JSAPIParams `json:"jsapi,omitempty"` // JSAPI 前端调起参数
 }
 
 // Service 订单服务。
@@ -190,6 +191,7 @@ func (s *Service) Pay(ctx context.Context, req *PayRequest) (*PayResponse, error
 		PayURL:   cp.PayURL,
 		QRCode:   cp.QRCode,
 		PrepayID: cp.PrepayID,
+		JSAPI:    cp.JSAPIParams,
 	}, nil
 }
 

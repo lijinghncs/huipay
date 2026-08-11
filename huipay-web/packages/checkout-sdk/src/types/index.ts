@@ -21,6 +21,18 @@ export interface PayResponse {
   pay_url?: string;
   qr_code?: string;
   prepay_id?: string;
+  /** JSAPI 微信内拉起的调起参数（后端对 prepay_id 二次签名） */
+  jsapi?: JSAPIParams;
+}
+
+/** JSAPI 前端调起参数（传给 WeixinJSBridge.getBrandWCPayRequest）。 */
+export interface JSAPIParams {
+  appId: string;
+  timeStamp: string;
+  nonceStr: string;
+  package: string;
+  signType: string;
+  paySign: string;
 }
 
 export interface CheckoutProps {

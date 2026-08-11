@@ -7,12 +7,14 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { HuiPayCheckout } from '../components/Checkout';
 import { post } from '@huipay/shared/api-client';
 import { createApi } from '@huipay/shared/api-client';
+import { ensureWechatOpenId, readOpenId } from '../utils/wechatOAuth';
 import '../styles/global.css';
 
 const queryClient = new QueryClient();
 const params = new URLSearchParams(window.location.search);
+const apiBase = import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn';
 createApi({
-  baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  baseURL: apiBase,
   merchantIdProvider: () => Number(params.get('merchant_id') ?? 0),
 });
 
@@ -33,6 +35,11 @@ function useEmbedInfo(order: string) {
 
 function App() {
   const order = params.get('order') ?? '';
+  // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
+  if (ensureWechatOpenId(apiBase)) {
+    return <div style={{ padding: 24 }}>微信授权中…</div>;
+  }
+  const openid = readOpenId();
   const { data: info, isLoading } = useEmbedInfo(order);
 
   if (isLoading || !info) {
@@ -53,6 +60,7 @@ function App() {
         channels={info.channels}
         amount={info.amount}
         discount={info.discount}
+        openId={openid}
         onSuccess={(r) => window.parent.postMessage({ type: 'huipay:success', payload: r }, '*')}
         onError={(e) => window.parent.postMessage({ type: 'huipay:error', payload: { message: e.message } }, '*')}
       />

@@ -26,6 +26,7 @@ type WeChatConfig struct {
 	Enabled            bool   `mapstructure:"enabled"`               // 是否启用微信支付通道
 	MchID              string `mapstructure:"mchid"`                 // 微信支付商户号
 	AppID              string `mapstructure:"appid"`                 // 公众号/小程序 AppID
+	AppSecret          string `mapstructure:"app_secret"`            // 公众号/小程序 AppSecret（OAuth 换 openid 用）
 	APIv3Key           string `mapstructure:"api_v3_key"`            // APIv3 密钥（回调解密用）
 	MerchantSerialNo   string `mapstructure:"merchant_serial_no"`    // 商户 API 证书序列号
 	MerchantPrivateKey string `mapstructure:"merchant_private_key"`  // 商户 API 私钥（PEM 内容）

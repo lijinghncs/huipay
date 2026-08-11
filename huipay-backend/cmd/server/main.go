@@ -26,6 +26,8 @@ import (
 	orderservice "github.com/huipay/huipay-backend/internal/order/service"
 	orderscheduler "github.com/huipay/huipay-backend/internal/order/scheduler"
 
+	oauthhandler "github.com/huipay/huipay-backend/internal/payment/oauth"
+
 	accounthandler "github.com/huipay/huipay-backend/internal/account/handler"
 	accountrepo "github.com/huipay/huipay-backend/internal/account/repository"
 	accountservice "github.com/huipay/huipay-backend/internal/account/service"
@@ -124,6 +126,7 @@ func main() {
 	r.Use(obs.GinTrace())
 	r.Use(obs.GinAccessLog(logger))
 	r.Use(errs.GinErrorHandler(logger))
+	r.Use(middleware.CORS())
 	r.Use(middleware.MerchantID())
 
 	// 7. 注册路由
@@ -131,6 +134,12 @@ func main() {
 	accountH := accounthandler.New(accountSvc, logger)
 	splitH := splithandler.New(splitSvc, logger)
 	notifyH := notifyhandler.New(wxAdapter, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
+
+	// 微信 OAuth（公众号网页授权，用于 JSAPI 场景获取 openid）
+	var oauthH *oauthhandler.Handler
+	if cfg.WeChat.Enabled && cfg.WeChat.AppID != "" && cfg.WeChat.AppSecret != "" {
+		oauthH = oauthhandler.New(wechat.NewOAuthClient(cfg.WeChat), cfg.WeChat.NotifyBaseURL, logger)
+	}
 
 	v1 := r.Group("/v1")
 	{
@@ -143,6 +152,11 @@ func main() {
 
 		v1.POST("/notify/wechat", notifyH.HandleWechat)
 		v1.POST("/notify/wechat/refund", notifyH.HandleWechatRefund)
+
+		if oauthH != nil {
+			v1.GET("/oauth/wechat/authorize", oauthH.Authorize)
+			v1.GET("/oauth/wechat/callback", oauthH.Callback)
+		}
 
 		v1.GET("/wallets/:entity_id", accountH.GetWallet)
 		v1.GET("/wallets/:entity_id/entries", accountH.ListEntries)

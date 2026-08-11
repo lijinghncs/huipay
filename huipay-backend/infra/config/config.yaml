@@ -22,6 +22,7 @@ wechat:
   enabled: false
   mchid: ""
   appid: ""
+  app_secret: ""
   api_v3_key: ""
   merchant_serial_no: ""
   merchant_private_key: ""

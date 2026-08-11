@@ -27,12 +27,23 @@ type CreatePaymentRequest struct {
 	OpenID     string  // JSAPI 场景必填
 }
 
+// JSAPIParams 微信内拉起 JSAPI 支付所需的调起参数（前端传给 getBrandWCPayRequest）。
+type JSAPIParams struct {
+	AppID     string `json:"appId"`
+	TimeStamp string `json:"timeStamp"`
+	NonceStr  string `json:"nonceStr"`
+	Package   string `json:"package"` // "prepay_id=xxx"
+	SignType  string `json:"signType"`
+	PaySign   string `json:"paySign"`
+}
+
 // CreatePaymentResponse 预下单响应。
 type CreatePaymentResponse struct {
 	ChannelTradeNo string
 	PayURL         string
 	QRCode         string
-	PrepayID       string // JSAPI 预支付单号，用于前端拉起
+	PrepayID       string       // JSAPI 预支付单号，用于前端拉起
+	JSAPIParams    *JSAPIParams // JSAPI 场景的调起参数
 }
 
 // PaymentStatus 支付状态。

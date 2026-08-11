@@ -92,7 +92,12 @@ func (a *Adapter) CreatePayment(ctx context.Context, req *channel.CreatePaymentR
 		if err != nil {
 			return nil, fmt.Errorf("wechat jsapi prepay: %w", err)
 		}
-		return &channel.CreatePaymentResponse{PrepayID: resp.PrepayID}, nil
+		// 生成前端拉起 JSAPI 所需的调起参数（二次签名）
+		jsapiParams, err := BuildJSAPIParams(a.cfg.AppID, resp.PrepayID, a.cfg.APIv3Key)
+		if err != nil {
+			return nil, fmt.Errorf("wechat jsapi params: %w", err)
+		}
+		return &channel.CreatePaymentResponse{PrepayID: resp.PrepayID, JSAPIParams: jsapiParams}, nil
 
 	default: // NATIVE
 		resp, err := a.client.NativePrepay(ctx, &NativePrepayRequest{

@@ -7,17 +7,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HuiPayCheckout } from '../components/Checkout';
 import { useOrder } from '../hooks/useCheckout';
 import { createApi } from '@huipay/shared/api-client';
+import { ensureWechatOpenId, readOpenId } from '../utils/wechatOAuth';
 import '../styles/global.css';
 
 const queryClient = new QueryClient();
 const params = new URLSearchParams(window.location.search);
+const apiBase = import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn';
 createApi({
-  baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  baseURL: apiBase,
   merchantIdProvider: () => Number(params.get('merchant_id') ?? 0),
 });
 
 function App() {
   const orderNo = params.get('order') ?? '';
+  // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
+  if (ensureWechatOpenId(apiBase)) {
+    return <div style={{ padding: 24 }}>微信授权中…</div>;
+  }
+  const openid = readOpenId();
   const { data: order, isLoading } = useOrder(orderNo, !!orderNo);
 
   // 若订单已带 pay_url 且为 H5 场景，自动跳转微信支付
@@ -42,7 +49,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div style={{ minHeight: '100vh', background: '#f6f7fb' }}>
-        <HuiPayCheckout orderNo={orderNo} channels={channels} amount={amount} discount={discount} />
+        <HuiPayCheckout orderNo={orderNo} channels={channels} amount={amount} discount={discount} openId={openid} />
       </div>
     </QueryClientProvider>
   );
