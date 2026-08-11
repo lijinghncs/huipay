@@ -31,6 +31,20 @@ const breadcrumbMap: Record<string, string> = {
   '/risk-rules': '风控规则',
 };
 
+// 由路径解析「当前菜单 key」与「页面标题」（子页面归入所属一级菜单）
+function resolvePage(pathname: string): { menuKey: string; title: string } {
+  if (pathname.startsWith('/merchants/')) {
+    const sub = pathname.split('/')[2]; // :id 或 ':id'
+    if (pathname.endsWith('/wechat-config')) {
+      return { menuKey: '/merchants', title: '微信支付配置' };
+    }
+    if (sub && /^\d+$/.test(sub)) {
+      return { menuKey: '/merchants', title: '商户详情' };
+    }
+  }
+  return { menuKey: breadcrumbMap[pathname] ? pathname : '/', title: breadcrumbMap[pathname] ?? '概览' };
+}
+
 const { useBreakpoint } = Grid;
 
 const MenuPanel = ({ selectedKey, onSelect }: { selectedKey: string; onSelect: (key: string) => void }) => (
@@ -53,7 +67,7 @@ export const BasicLayout: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { token } = theme.useToken();
 
-  const currentPage = breadcrumbMap[loc.pathname] ?? '概览';
+  const { menuKey, title: currentPage } = resolvePage(loc.pathname);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -119,7 +133,7 @@ export const BasicLayout: React.FC = () => {
               boxShadow: '1px 0 0 rgba(16,24,40,0.06)',
             }}
           >
-            <MenuPanel selectedKey={loc.pathname} onSelect={(k) => nav(k)} />
+            <MenuPanel selectedKey={menuKey} onSelect={(k) => nav(k)} />
           </Sider>
         )}
 
@@ -133,7 +147,7 @@ export const BasicLayout: React.FC = () => {
             closable={false}
           >
             <MenuPanel
-              selectedKey={loc.pathname}
+              selectedKey={menuKey}
               onSelect={(k) => {
                 nav(k);
                 setDrawerOpen(false);
@@ -166,7 +180,17 @@ export const BasicLayout: React.FC = () => {
                 </span>
                 <span style={{ fontSize: 18, fontWeight: 700 }}>{currentPage}</span>
               </Space>
-              {!isMobile && <Breadcrumb items={[{ title: '管理后台' }, { title: currentPage }]} />}
+              {!isMobile && (
+                <Breadcrumb
+                  items={[
+                    { title: '管理后台' },
+                    ...(menuKey !== '/' && menuKey !== loc.pathname
+                      ? [{ title: breadcrumbMap[menuKey] ?? menuKey, href: menuKey }]
+                      : []),
+                    { title: currentPage },
+                  ]}
+                />
+              )}
             </div>
 
             <div className="hp-page">
