@@ -59,6 +59,22 @@ func (h *Handler) Precreate(c *gin.Context) {
 	errs.OK(c, resp)
 }
 
+// PrecreateByCode POST /v1/checkout/precreate-by-code
+// 消费者扫码牌后输入金额建单。入参 code_id + amount，后端反查码牌所属商户。
+func (h *Handler) PrecreateByCode(c *gin.Context) {
+	var req service.PrecreateByCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	resp, err := h.svc.PrecreateByCode(c.Request.Context(), &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
 // Get GET /v1/checkout/:order_no。
 func (h *Handler) Get(c *gin.Context) {
 	no := c.Param("order_no")
@@ -82,6 +98,22 @@ func (h *Handler) Get(c *gin.Context) {
 type payReqHTTP struct {
 	PayType string `json:"pay_type"`            // NATIVE / H5 / JSAPI
 	OpenID  string `json:"openid,omitempty"`    // JSAPI 场景必填
+}
+
+// Query GET /v1/checkout/:order_no/query
+// 主动查询支付结果（只读，不改订单状态，以回调为准）。
+func (h *Handler) Query(c *gin.Context) {
+	no := c.Param("order_no")
+	if no == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "order_no required", 200))
+		return
+	}
+	res, err := h.svc.QueryPayment(c.Request.Context(), no)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, res)
 }
 
 // Pay POST /v1/checkout/:order_no/pay。

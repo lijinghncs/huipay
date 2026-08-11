@@ -16,6 +16,7 @@ import (
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/order/model"
 	"github.com/huipay/huipay-backend/internal/order/repository"
+	paymentcoderepo "github.com/huipay/huipay-backend/internal/paymentcode/repository"
 	"github.com/huipay/huipay-backend/internal/payment/channel"
 	"github.com/huipay/huipay-backend/internal/payment/router"
 )
@@ -28,6 +29,7 @@ type PrecreateRequest struct {
 	Subject         string
 	NotifyURL       string
 	ExpireSeconds   int
+	CodeID          string // 来源收款码牌短码（可选）
 }
 
 // PrecreateResponse 预下单响应。
@@ -65,15 +67,16 @@ type PayResponse struct {
 
 // Service 订单服务。
 type Service struct {
-	db     *gorm.DB
-	repo   *repository.OrderRepo
-	logger *zap.Logger
-	router *router.Router
+	db       *gorm.DB
+	repo     *repository.OrderRepo
+	logger   *zap.Logger
+	router   *router.Router
+	codeRepo *paymentcoderepo.PaymentCodeRepo
 }
 
 // NewService 构造 Service。
-func NewService(db *gorm.DB, logger *zap.Logger, router *router.Router) *Service {
-	return &Service{db: db, repo: repository.NewOrderRepo(db), logger: logger, router: router}
+func NewService(db *gorm.DB, logger *zap.Logger, router *router.Router, codeRepo *paymentcoderepo.PaymentCodeRepo) *Service {
+	return &Service{db: db, repo: repository.NewOrderRepo(db), logger: logger, router: router, codeRepo: codeRepo}
 }
 
 // Precreate 预下单（含幂等）。
@@ -105,6 +108,7 @@ func (s *Service) Precreate(ctx context.Context, req *PrecreateRequest) (*Precre
 		OrderNo:         orderNo,
 		MerchantOrderNo: req.MerchantOrderNo,
 		MerchantID:      req.MerchantID,
+		CodeID:          req.CodeID,
 		OrderType:       "PAYMENT",
 		Amount:          req.Amount,
 		PaidAmount:      0,
@@ -119,6 +123,47 @@ func (s *Service) Precreate(ctx context.Context, req *PrecreateRequest) (*Precre
 	return s.toResp(m), nil
 }
 
+// codeMinAmountCents 码牌建单最小金额（0.01 元）。
+const codeMinAmountCents int64 = 1
+
+// codeMaxAmountCents 码牌建单最大金额（50000.00 元）。
+const codeMaxAmountCents int64 = 5000000
+
+// PrecreateByCodeRequest 码牌建单请求（消费者扫码后输入金额）。
+type PrecreateByCodeRequest struct {
+	CodeID string
+	Amount int64 // 分
+}
+
+// PrecreateByCode 基于收款码牌建单：反查码牌所属商户，校验金额范围，生成商户单号并落单。
+func (s *Service) PrecreateByCode(ctx context.Context, req *PrecreateByCodeRequest) (*PrecreateResponse, error) {
+	if req.Amount < codeMinAmountCents || req.Amount > codeMaxAmountCents {
+		return nil, errs.New(errs.CodeInvalidParams, "amount out of range (0.01-50000.00)", 200)
+	}
+	if s.codeRepo == nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "payment code repo not configured", 500, nil)
+	}
+	code, err := s.codeRepo.GetByCodeID(ctx, req.CodeID)
+	if err != nil {
+		return nil, err
+	}
+	if code == nil {
+		return nil, errs.New(errs.CodeInvalidParams, "payment code not found", 200)
+	}
+	if code.Status != int(vo.CodeActive) {
+		return nil, errs.New(errs.CodeInvalidParams, "payment code disabled", 200)
+	}
+	// 商户单号：码牌 + 时间戳 + 随机，保证唯一（uk_merchant_order 兜底幂等）
+	merchantOrderNo := "C" + req.CodeID + time.Now().Format("060102150405") + uuid.NewString()[:8]
+	return s.Precreate(ctx, &PrecreateRequest{
+		MerchantID:      code.MerchantID,
+		MerchantOrderNo: merchantOrderNo,
+		Amount:          req.Amount,
+		Subject:         "扫码收款",
+		CodeID:          req.CodeID,
+	})
+}
+
 // GetByOrderNo 按订单号查询。
 func (s *Service) GetByOrderNo(ctx context.Context, orderNo string) (*model.OrderModel, error) {
 	m, err := s.repo.GetByOrderNo(ctx, orderNo)
@@ -129,6 +174,60 @@ func (s *Service) GetByOrderNo(ctx context.Context, orderNo string) (*model.Orde
 		return nil, err
 	}
 	return m, nil
+}
+
+// QueryResult 主动查询支付结果（只读，不改订单状态，以回调为准）。
+type QueryResult struct {
+	OrderNo        string          `json:"order_no"`
+	LocalStatus    string          `json:"local_status"`
+	Paid           bool            `json:"paid"`
+	PaidAmount     int64           `json:"paid_amount"`
+	ChannelTradeNo string          `json:"channel_trade_no,omitempty"`
+	Channel        vo.ChannelCode  `json:"channel,omitempty"`
+	PaidAt         int64           `json:"paid_at,omitempty"`
+}
+
+// QueryPayment 主动向通道查询支付结果（诊断/前端长轮询兜底）。
+// 仅查询通道侧状态，不更新本地订单（仍以回调为准，避免并发覆盖）。
+func (s *Service) QueryPayment(ctx context.Context, orderNo string) (*QueryResult, error) {
+	order, err := s.GetByOrderNo(ctx, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, errs.New(errs.CodeInvalidParams, "order not found", 400)
+	}
+	res := &QueryResult{
+		OrderNo:     order.OrderNo,
+		LocalStatus: order.Status,
+		Channel:     order.Channel,
+	}
+	if order.Status == string(vo.OrderPaid) {
+		res.Paid = true
+		res.PaidAmount = order.PaidAmount
+		res.ChannelTradeNo = order.ChannelTradeNo
+		if order.PaidAt != nil {
+			res.PaidAt = order.PaidAt.Unix()
+		}
+		return res, nil
+	}
+	// 本地未支付：尝试向通道主动查询（仅当已选通道且适配器可用）
+	if order.Channel == "" {
+		return res, nil
+	}
+	adapter := s.router.GetAdapter(order.Channel)
+	if adapter == nil {
+		return res, nil
+	}
+	st, err := adapter.QueryPayment(ctx, order.OrderNo)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeChannelUnavailable, "channel query fail", 400, err)
+	}
+	res.Paid = st.Paid
+	res.PaidAmount = st.PaidAmount
+	res.ChannelTradeNo = st.ChannelTradeNo
+	res.PaidAt = st.PaidAt
+	return res, nil
 }
 
 // Pay 发起支付：路由决策 → 调通道预下单 → 返回场景化支付参数。

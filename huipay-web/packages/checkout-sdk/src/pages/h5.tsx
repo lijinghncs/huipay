@@ -1,10 +1,12 @@
 // H5 收银台（独立 URL 形态）。
 // 真实部署：路由 /h5 → https://checkout.huipay.cn/h5
-// URL 参数：order 必填（订单号）；amount/discount/merchant_id 可选。
+// URL 参数：order 必填（订单号）；code 可选（收款码牌短码，无 order 时用于码牌建单）；
+// amount/discount/merchant_id 可选。
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HuiPayCheckout } from '../components/Checkout';
+import { AmountInput } from '../components/AmountInput';
 import { useOrder } from '../hooks/useCheckout';
 import { createApi } from '@huipay/shared/api-client';
 import { ensureWechatOpenId, readOpenId } from '../utils/wechatOAuth';
@@ -20,12 +22,27 @@ createApi({
 
 function App() {
   const orderNo = params.get('order') ?? '';
+  const code = params.get('code') ?? '';
+  const [createdOrder, setCreatedOrder] = React.useState('');
+
   // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
   if (ensureWechatOpenId(apiBase)) {
     return <div style={{ padding: 24 }}>微信授权中…</div>;
   }
   const openid = readOpenId();
-  const { data: order, isLoading } = useOrder(orderNo, !!orderNo);
+
+  // 码牌模式：无 order 但有 code → 先输入金额建单
+  if (!orderNo && code) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <div style={{ minHeight: '100vh', background: '#f6f7fb', display: 'flex', justifyContent: 'center' }}>
+          <AmountInput code={code} onCreated={setCreatedOrder} />
+        </div>
+      </QueryClientProvider>
+    );
+  }
+
+  const { data: order, isLoading } = useOrder(orderNo || createdOrder, !!(orderNo || createdOrder));
 
   // 若订单已带 pay_url 且为 H5 场景，自动跳转微信支付
   React.useEffect(() => {
@@ -49,7 +66,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div style={{ minHeight: '100vh', background: '#f6f7fb' }}>
-        <HuiPayCheckout orderNo={orderNo} channels={channels} amount={amount} discount={discount} openId={openid} />
+        <HuiPayCheckout orderNo={orderNo || createdOrder} channels={channels} amount={amount} discount={discount} openId={openid} />
       </div>
     </QueryClientProvider>
   );

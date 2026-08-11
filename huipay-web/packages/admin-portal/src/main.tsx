@@ -10,7 +10,8 @@ import { App } from './App';
 import './styles/global.css';
 
 createApi({
-  baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  // 同源走 vite proxy（/v1 → 后端），生产可用 VITE_API_BASE 覆盖
+  baseURL: import.meta.env.VITE_API_BASE ?? '',
   // 管理后台无商户身份，返回 0 表示不注入 X-Merchant-Id
   merchantIdProvider: () => 0,
 });

@@ -20,7 +20,53 @@ export async function getWallet(entityId: number): Promise<Wallet> {
   return get<Wallet>(`/v1/wallets/${entityId}`);
 }
 
-/** 拉取账本流水。 */
-export async function listEntries(entityId: number): Promise<{ items: JournalEntry[] }> {
-  return get<{ items: JournalEntry[] }>(`/v1/wallets/${entityId}/entries`);
+/** 拉取账本流水（分页 + 过滤）。 */
+export async function listEntries(
+  entityId: number,
+  params: { page?: number; size?: number; biz_type?: string; biz_id?: string; start?: string; end?: string } = {},
+): Promise<{ items: JournalEntry[]; total: number; page: number; size: number }> {
+  return get<{ items: JournalEntry[]; total: number; page: number; size: number }>(
+    `/v1/wallets/${entityId}/entries`,
+    { params },
+  );
+}
+
+/** 当前商户自助资料（商户号 / 名称 / 钱包 / 余额）。 */
+export interface MerchantProfile {
+  id: number;
+  entity_code: string;
+  entity_type: string;
+  name: string;
+  kyc_status: number;
+  kyc_data?: Record<string, unknown>;
+  status: number;
+  wallet_no: string;
+  balance: number;
+  frozen: number;
+  pre_frozen: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 拉取当前商户资料。 */
+export async function getMerchantProfile(): Promise<MerchantProfile> {
+  return get<MerchantProfile>('/v1/merchant/profile');
+}
+
+/** 当前商户经营概览。 */
+export interface MerchantOverview {
+  merchant_id: number;
+  entity_code: string;
+  name: string;
+  balance: number;
+  frozen: number;
+  total_paid: number;
+  order_count: number;
+  paid_order_count: number;
+  active_code_count: number;
+}
+
+/** 拉取当前商户经营概览。 */
+export async function getMerchantOverview(): Promise<MerchantOverview> {
+  return get<MerchantOverview>('/v1/merchant/overview');
 }

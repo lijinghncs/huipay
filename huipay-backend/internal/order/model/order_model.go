@@ -13,6 +13,7 @@ type OrderModel struct {
 	OrderNo         string         `gorm:"column:order_no;size:32;uniqueIndex:uk_order_no;not null"`
 	MerchantOrderNo string         `gorm:"column:merchant_order_no;size:64;not null"`
 	MerchantID      uint64         `gorm:"column:merchant_id;not null"`
+	CodeID          string         `gorm:"column:code_id;size:16"` // 来源收款码牌短码
 	ParentOrderNo   string         `gorm:"column:parent_order_no;size:32"`
 	OrderType       string         `gorm:"column:order_type;size:32;not null;default:PAYMENT"`
 	Amount          int64          `gorm:"column:amount;not null"`

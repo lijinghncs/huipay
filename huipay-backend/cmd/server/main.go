@@ -34,6 +34,14 @@ import (
 	"github.com/huipay/huipay-backend/internal/account/bootstrap"
 	"github.com/huipay/huipay-backend/internal/account/ledger"
 
+	merchantrepo "github.com/huipay/huipay-backend/internal/merchant/repository"
+	merchantservice "github.com/huipay/huipay-backend/internal/merchant/service"
+	merchanthandler "github.com/huipay/huipay-backend/internal/merchant/handler"
+
+	paymentcoderepo "github.com/huipay/huipay-backend/internal/paymentcode/repository"
+	paymentcodeservice "github.com/huipay/huipay-backend/internal/paymentcode/service"
+	paymentcodehandler "github.com/huipay/huipay-backend/internal/paymentcode/handler"
+
 	"github.com/huipay/huipay-backend/internal/payment/channel"
 	notifyhandler "github.com/huipay/huipay-backend/internal/payment/notify"
 	paymentrouter "github.com/huipay/huipay-backend/internal/payment/router"
@@ -75,7 +83,8 @@ func main() {
 	accountSvc := accountservice.NewService(ledgerSvc, walletRepo, journalRepo, logger)
 
 	paymentRouter := paymentrouter.NewDefaultRouter()
-	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter)
+	paymentCodeRepo := paymentcoderepo.NewPaymentCodeRepo(dbConn.Master)
+	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter, paymentCodeRepo)
 
 	// 微信通道适配器（enabled 时初始化；失败仅告警，不阻断服务启动）
 	var wxAdapter channel.Adapter
@@ -119,6 +128,13 @@ func main() {
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, logger)
 	splitSvc := splitservice.NewService(ruleEngine, splitExec, accountSvc, logger)
 
+	// 商户进件服务（依赖 entity 仓储 + 账户服务）
+	entityRepo := merchantrepo.NewEntityRepo(dbConn.Master)
+	merchantSvc := merchantservice.NewService(dbConn.Master, entityRepo, accountSvc, logger)
+
+	// 收款码牌服务
+	paymentCodeSvc := paymentcodeservice.NewService(paymentCodeRepo, logger)
+
 	// 6. 装配 Gin
 	gin.SetMode(cfg.GinMode)
 	r := gin.New()
@@ -133,6 +149,8 @@ func main() {
 	orderH := orderhandler.New(orderSvc, logger)
 	accountH := accounthandler.New(accountSvc, logger)
 	splitH := splithandler.New(splitSvc, logger)
+	merchantH := merchanthandler.New(merchantSvc, logger)
+	paymentCodeH := paymentcodehandler.New(paymentCodeSvc, logger)
 	notifyH := notifyhandler.New(wxAdapter, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 
 	// 微信 OAuth（公众号网页授权，用于 JSAPI 场景获取 openid）
@@ -144,9 +162,11 @@ func main() {
 	v1 := r.Group("/v1")
 	{
 		v1.POST("/checkout/precreate", orderH.Precreate)
+		v1.POST("/checkout/precreate-by-code", orderH.PrecreateByCode)
 		v1.GET("/checkout/list", orderH.List)
 		v1.POST("/checkout/embed-info", orderH.EmbedInfo)
 		v1.GET("/checkout/:order_no", orderH.Get)
+		v1.GET("/checkout/:order_no/query", orderH.Query)
 		v1.POST("/checkout/:order_no/refund", orderH.Refund)
 		v1.POST("/checkout/:order_no/pay", orderH.Pay)
 
@@ -163,6 +183,25 @@ func main() {
 
 		v1.POST("/split/execute", splitH.Execute)
 		v1.GET("/split/:order_no", splitH.Get)
+
+		// 管理后台：商户进件、列表、详情、更新、状态、概览
+		v1.POST("/admin/merchants", merchantH.Onboard)
+		v1.GET("/admin/merchants", merchantH.List)
+		v1.GET("/admin/merchants/:id", merchantH.Get)
+		v1.PUT("/admin/merchants/:id", merchantH.Update)
+		v1.POST("/admin/merchants/:id/status", merchantH.SetStatus)
+		v1.GET("/admin/merchants/:id/overview", merchantH.Overview)
+		v1.GET("/admin/merchants/:id/wechat-config", merchantH.GetWechatConfig)
+		v1.PUT("/admin/merchants/:id/wechat-config", merchantH.UpdateWechatConfig)
+
+		// 收款码牌：商户侧自助管理
+		v1.POST("/merchant/codes", paymentCodeH.Create)
+		v1.GET("/merchant/codes", paymentCodeH.List)
+		v1.POST("/merchant/codes/:id/disable", paymentCodeH.Disable)
+
+		// 商户自助：当前商户资料与经营概览（读 X-Merchant-Id 中间件）
+		v1.GET("/merchant/profile", merchantH.SelfProfile)
+		v1.GET("/merchant/overview", merchantH.SelfOverview)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {

@@ -3,6 +3,7 @@ package handler
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -38,22 +39,49 @@ func (h *Handler) GetWallet(c *gin.Context) {
 }
 
 // ListEntries GET /v1/wallets/:entity_id/entries。
+// 支持过滤参数：biz_type / biz_id / start / end / page / size（均为可选，保持向后兼容）。
 func (h *Handler) ListEntries(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("entity_id"), 10, 64)
 	if err != nil {
 		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "entity_id invalid", 200))
 		return
 	}
-	limit := 50
-	if v := c.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			limit = n
+	page := 1
+	if v := c.Query("page"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
 		}
 	}
-	list, err := h.svc.ListEntries(c.Request.Context(), id, limit)
+	size := 50
+	if v := c.Query("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			size = n
+		}
+	} else if v := c.Query("limit"); v != "" { // 向后兼容旧参数
+		if n, err := strconv.Atoi(v); err == nil {
+			size = n
+		}
+	}
+	q := service.EntryQuery{
+		BizType: c.Query("biz_type"),
+		BizID:   c.Query("biz_id"),
+		Page:    page,
+		Size:    size,
+	}
+	if v := c.Query("start"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			q.Start = &t
+		}
+	}
+	if v := c.Query("end"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			q.End = &t
+		}
+	}
+	res, err := h.svc.ListEntriesFiltered(c.Request.Context(), id, q)
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	errs.OK(c, gin.H{"items": list, "limit": limit})
+	errs.OK(c, res)
 }

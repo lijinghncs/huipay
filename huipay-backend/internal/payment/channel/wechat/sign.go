@@ -64,6 +64,24 @@ func parsePublicKey(pemStr string) (*rsa.PublicKey, error) {
 	return rk, nil
 }
 
+// ValidatePrivateKey 校验商户私钥 PEM 是否合法（供商户微信配置校验复用，不保留密钥）。
+func ValidatePrivateKey(pemStr string) error {
+	if pemStr == "" {
+		return nil
+	}
+	_, err := parsePrivateKey(pemStr)
+	return err
+}
+
+// ValidatePublicKey 校验平台公钥 PEM 是否合法（供商户微信配置校验复用，不保留密钥）。
+func ValidatePublicKey(pemStr string) error {
+	if pemStr == "" {
+		return nil
+	}
+	_, err := parsePublicKey(pemStr)
+	return err
+}
+
 // buildRequestSignStr 构造请求签名串（微信 V3 规范）。
 // canonicalURL 为规范化 URL（含 query，如 /v3/pay/transactions/native）。
 func buildRequestSignStr(method, canonicalURL, timestamp, nonce, body string) string {

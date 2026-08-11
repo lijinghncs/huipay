@@ -1,3 +1,4 @@
 -- 0008_add_t_order_closed_at.up.sql
--- 订单关单时间（超时关单定时任务写入）
-ALTER TABLE t_order ADD COLUMN closed_at DATETIME(3) NULL COMMENT '关单时间';
+-- 补充 t_order.closed_at 列（与 OrderModel 对齐，用于记录关单时间）
+ALTER TABLE t_order
+  ADD COLUMN closed_at DATETIME(3) NULL AFTER paid_at;

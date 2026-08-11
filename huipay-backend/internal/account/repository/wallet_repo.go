@@ -152,5 +152,64 @@ func (r *JournalRepo) ListByWallet(ctx context.Context, walletID uint64, limit i
 	return list, nil
 }
 
+// EntryFilter 流水过滤条件。
+type EntryFilter struct {
+	WalletID uint64
+	BizType  string // 空 = 不过滤
+	BizID    string // 空 = 不过滤
+	Start    *time.Time // 空 = 不过滤
+	End      *time.Time // 空 = 不过滤
+	Offset   int
+	Limit    int
+}
+
+// ListByFilter 按钱包 + 可选条件（业务类型 / 业务 ID / 时间区间）分页列流水。
+// 复用索引 idx_biz(biz_type, biz_id) 与 idx_wallet_created。
+func (r *JournalRepo) ListByFilter(ctx context.Context, f EntryFilter) ([]JournalEntryModel, error) {
+	q := r.db.WithContext(ctx).Model(&JournalEntryModel{}).Where("wallet_id = ?", f.WalletID)
+	if f.BizType != "" {
+		q = q.Where("biz_type = ?", f.BizType)
+	}
+	if f.BizID != "" {
+		q = q.Where("biz_id = ?", f.BizID)
+	}
+	if f.Start != nil {
+		q = q.Where("created_at >= ?", *f.Start)
+	}
+	if f.End != nil {
+		q = q.Where("created_at < ?", *f.End)
+	}
+	if f.Limit <= 0 || f.Limit > 200 {
+		f.Limit = 50
+	}
+	var list []JournalEntryModel
+	if err := q.Order("created_at DESC").Offset(f.Offset).Limit(f.Limit).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// CountByFilter 统计满足过滤条件的流水数量（用于分页 total）。
+func (r *JournalRepo) CountByFilter(ctx context.Context, f EntryFilter) (int64, error) {
+	q := r.db.WithContext(ctx).Model(&JournalEntryModel{}).Where("wallet_id = ?", f.WalletID)
+	if f.BizType != "" {
+		q = q.Where("biz_type = ?", f.BizType)
+	}
+	if f.BizID != "" {
+		q = q.Where("biz_id = ?", f.BizID)
+	}
+	if f.Start != nil {
+		q = q.Where("created_at >= ?", *f.Start)
+	}
+	if f.End != nil {
+		q = q.Where("created_at < ?", *f.End)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // DB 暴露主库用于事务。
 func (r *JournalRepo) DB() *gorm.DB { return r.db }

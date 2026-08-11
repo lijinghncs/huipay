@@ -59,6 +59,14 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
     useCheckoutUI();
   const payMutation = usePay();
 
+  // 未选通道时自动选中第一个可用通道（码牌扫码收款默认即可支付，无需手动选择）
+  React.useEffect(() => {
+    if (!selectedChannel && channels.length > 0) {
+      const first = channels.find((c) => c.available) ?? channels[0];
+      if (first) setSelectedChannel(first.code);
+    }
+  }, [selectedChannel, channels, setSelectedChannel]);
+
   React.useEffect(() => {
     if (isPaid) {
       onSuccess?.({ orderNo, channel: order?.channel ?? '' });

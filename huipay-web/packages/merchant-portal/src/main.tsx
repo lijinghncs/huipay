@@ -10,7 +10,8 @@ import { App } from './App';
 
 // 初始化 API 客户端
 createApi({
-  baseURL: import.meta.env.VITE_API_BASE ?? 'https://api.huipay.cn',
+  // 置空则走 vite 代理（/v1 → 本机 http://localhost:8080）
+  baseURL: import.meta.env.VITE_API_BASE ?? '',
   // 商家工作台：固定商户号（开发模式；生产由登录态注入）
   merchantIdProvider: () => 10001,
 });

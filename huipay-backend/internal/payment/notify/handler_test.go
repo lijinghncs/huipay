@@ -211,7 +211,7 @@ func newHandlerOnDB(t *testing.T, db *gorm.DB, payload *channel.NotifyPayload, s
 	journalRepo := repository.NewJournalRepo(db)
 	ledgerSvc := ledger.NewService(walletRepo, journalRepo, logger)
 	accountSvc := accountsvc.NewService(ledgerSvc, walletRepo, journalRepo, logger)
-	orderSvc := orderservice.NewService(db, logger, router.NewDefaultRouter())
+	orderSvc := orderservice.NewService(db, logger, router.NewDefaultRouter(), nil)
 	idemStore := idem.NewMySQLStore(db)
 	h := New(&mockAdapter{payload: payload}, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 	return &handlerHB{db: db, svc: h}
