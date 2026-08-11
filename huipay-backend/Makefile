@@ -5,9 +5,15 @@ BIN_DIR    ?= bin
 APP_NAME   ?= huipay-server
 MAIN_PKG   ?= ./cmd/server
 
-MYSQL_DSN  ?= huipay:huipay@tcp(127.0.0.1:3306)/huipay_main?charset=utf8mb4&parseTime=True&loc=Local
+# 数据库连接 DSN（不含 mysql:// 前缀，migrate-up/down 会拼接）。
+# 数据库名默认 huipay；golang-migrate 用 schema_migrations 表追踪版本。
+# 密码含特殊字符（如 lijing123!@#）时，须 URL 编码（@ -> %40, # -> %23），
+# 或通过环境变量注入：MYSQL_DSN="root:xxx@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local" make migrate-up
+MYSQL_DSN  ?= root:CHANGE_ME@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local
 
-.PHONY: help run build test lint migrate-up migrate-down tidy clean
+MIGRATE_DIR ?= infra/migrator/migrations
+
+.PHONY: help run build test lint migrate-up migrate-down migrate-create tidy clean
 
 help:
 	@echo "Targets:"
@@ -34,10 +40,14 @@ lint:
 	golangci-lint run ./...
 
 migrate-up:
-	migrate -path migrations -database "mysql://$(MYSQL_DSN)" up
+	migrate -path $(MIGRATE_DIR) -database "mysql://$(MYSQL_DSN)" up
 
 migrate-down:
-	migrate -path migrations -database "mysql://$(MYSQL_DSN)" down 1
+	migrate -path $(MIGRATE_DIR) -database "mysql://$(MYSQL_DSN)" down 1
+
+migrate-create:
+	@test -n "$(NAME)" || (echo "usage: make migrate-create NAME=desc"; exit 1)
+	migrate create -ext sql -dir $(MIGRATE_DIR) -seq $(NAME)
 
 tidy:
 	$(GO) mod tidy

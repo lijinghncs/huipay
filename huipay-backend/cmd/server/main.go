@@ -21,6 +21,7 @@ import (
 	"github.com/huipay/huipay-backend/infra/idem"
 	"github.com/huipay/huipay-backend/infra/obs"
 	"github.com/huipay/huipay-backend/infra/prom"
+	"github.com/huipay/huipay-backend/infra/migrator"
 
 	orderhandler "github.com/huipay/huipay-backend/internal/order/handler"
 	orderservice "github.com/huipay/huipay-backend/internal/order/service"
@@ -72,10 +73,18 @@ func main() {
 		dbConn = &db.DB{}
 	}
 
-	// 4. 初始化 Prometheus
+	// 4. 应用数据库迁移（迁移文件已内嵌进二进制；幂等，已应用则跳过）
+	//    仅在真实连接数据库时执行；HUIPAY_SKIP_DB 冒烟模式 dbConn.Master 为 nil 跳过
+	if dbConn.Master != nil {
+		if err := migrator.Run(cfg.MySQLMaster, logger); err != nil {
+			logger.Fatal(fmt.Sprintf("apply db migrations failed: %v", err))
+		}
+	}
+
+	// 5. 初始化 Prometheus
 	prom.MustRegister()
 
-	// 5. 装配业务服务（手工注入；后续可改为 Wire）
+	// 6. 装配业务服务（手工注入；后续可改为 Wire）
 	walletRepo := accountrepo.NewWalletRepo(dbConn.Master)
 	journalRepo := accountrepo.NewJournalRepo(dbConn.Master)
 	ledgerSvc := ledger.NewService(walletRepo, journalRepo, logger)

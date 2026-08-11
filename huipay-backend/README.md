@@ -20,15 +20,35 @@ Makefile                   构建脚本
 
 ```bash
 # 1. 准备 MySQL
-mysql -uroot -e "CREATE DATABASE huipay_main DEFAULT CHARSET utf8mb4;"
+mysql -uroot -e "CREATE DATABASE huipay DEFAULT CHARSET utf8mb4;"
 
-# 2. 跑迁移
-make migrate-up
+# 2. 安装 golang-migrate（带 mysql 驱动）
+go install -tags 'mysql' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+# 确保 $(go env GOPATH)/bin 在 PATH 中
 
-# 3. 编译 & 启动
+# 3. 跑迁移（DSN 默认 root:CHANGE_ME@.../huipay，密码含特殊字符须 URL 编码或用环境变量覆盖）
+MYSQL_DSN="root:xxx@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local" make migrate-up
+
+# 4. 编译 & 启动
 make build
 ./bin/huipay-server
 ```
+
+## 数据库迁移（golang-migrate）
+
+本项目用 [golang-migrate](https://github.com/golang-migrate/migrate) 统一管理 schema（`schema_migrations` 表追踪版本），避免"代码有列、库无列"的漂移。
+
+- **迁移文件**：`infra/migrator/migrations/NNNN_*.{up,down}.sql`，按数字前缀递增。
+- **新增迁移**：`make migrate-create NAME=描述`（或 CLI `migrate create -ext sql -dir infra/migrator/migrations -seq 描述`），然后编辑 up/down SQL。
+- **执行迁移**：`make migrate-up`。应用启动时也会自动执行（`infra/migrator` 内嵌，见下）。
+- **回滚一个**：`make migrate-down`。
+- **查看版本**：`migrate -path infra/migrator/migrations -database "mysql://$(MYSQL_DSN)" version`。
+
+> DSN 密码若含特殊字符（`@` `#` 等），在 URL 中必须编码（`@`→`%40`，`#`→`%23`），否则 DSN 解析会错位。最稳妥是通过 `MYSQL_DSN` 环境变量注入。
+
+### 迁移内嵌到应用（推荐用于部署）
+
+迁移 SQL 通过 `//go:embed` 打进二进制，应用启动时经 [infra/migrator](file:///d:/code/汇聚付/huipay/huipay-backend/infra/migrator/migrator.go) 的 `migrator.Run()` **自动执行未应用的迁移**（幂等：已应用则跳过）。因此服务器部署时**无需**额外安装 migrate CLI 或手动跑迁移，直接启动新版本即可。
 
 ## 关键接口
 
