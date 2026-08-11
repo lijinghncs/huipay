@@ -24,6 +24,9 @@ const codeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 // 短码长度。
 const codeLength = 6
 
+// checkoutBaseURL 收银台 H5 域名（与 order service 的 checkout_url 保持一致；后续可配置化）。
+const checkoutBaseURL = "https://checkout.huipay.cn"
+
 // CreateRequest 创建码牌请求。
 type CreateRequest struct {
 	MerchantID uint64
@@ -37,6 +40,7 @@ type Code struct {
 	CodeID     string    `json:"code_id"`
 	Status     int       `json:"status"`
 	Remark     string    `json:"remark"`
+	CheckoutURL string   `json:"checkout_url"` // 扫码直达收银台金额输入页
 	CreatedAt  time.Time `json:"created_at"`
 	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 }
@@ -139,6 +143,7 @@ func toCode(m *repository.PaymentCodeModel) *Code {
 		CodeID:     m.CodeID,
 		Status:     m.Status,
 		Remark:     m.Remark,
+		CheckoutURL: checkoutBaseURL + "/h5?code=" + m.CodeID,
 		CreatedAt:  m.CreatedAt,
 		DisabledAt: m.DisabledAt,
 	}

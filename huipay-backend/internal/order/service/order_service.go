@@ -65,18 +65,24 @@ type PayResponse struct {
 	JSAPI    *channel.JSAPIParams `json:"jsapi,omitempty"` // JSAPI 前端调起参数
 }
 
+// MerchantAdapterResolver 按商户解析通道适配器（商户级微信配置生效；nil 表示走平台通道）。
+type MerchantAdapterResolver interface {
+	GetAdapter(ctx context.Context, merchantID uint64, code vo.ChannelCode) (channel.Adapter, error)
+}
+
 // Service 订单服务。
 type Service struct {
-	db       *gorm.DB
-	repo     *repository.OrderRepo
-	logger   *zap.Logger
-	router   *router.Router
-	codeRepo *paymentcoderepo.PaymentCodeRepo
+	db               *gorm.DB
+	repo             *repository.OrderRepo
+	logger           *zap.Logger
+	router           *router.Router
+	codeRepo         *paymentcoderepo.PaymentCodeRepo
+	merchantAdapters MerchantAdapterResolver // 商户级通道适配器解析（可空）
 }
 
 // NewService 构造 Service。
-func NewService(db *gorm.DB, logger *zap.Logger, router *router.Router, codeRepo *paymentcoderepo.PaymentCodeRepo) *Service {
-	return &Service{db: db, repo: repository.NewOrderRepo(db), logger: logger, router: router, codeRepo: codeRepo}
+func NewService(db *gorm.DB, logger *zap.Logger, router *router.Router, codeRepo *paymentcoderepo.PaymentCodeRepo, merchantAdapters MerchantAdapterResolver) *Service {
+	return &Service{db: db, repo: repository.NewOrderRepo(db), logger: logger, router: router, codeRepo: codeRepo, merchantAdapters: merchantAdapters}
 }
 
 // Precreate 预下单（含幂等）。
@@ -138,6 +144,7 @@ type PrecreateByCodeRequest struct {
 // PrecreateByCode 基于收款码牌建单：反查码牌所属商户，校验金额范围，生成商户单号并落单。
 func (s *Service) PrecreateByCode(ctx context.Context, req *PrecreateByCodeRequest) (*PrecreateResponse, error) {
 	if req.Amount < codeMinAmountCents || req.Amount > codeMaxAmountCents {
+		prom.PaymentCodeInvalidAttempts.WithLabelValues("amount_out_of_range").Inc()
 		return nil, errs.New(errs.CodeInvalidParams, "amount out of range (0.01-50000.00)", 200)
 	}
 	if s.codeRepo == nil {
@@ -148,9 +155,11 @@ func (s *Service) PrecreateByCode(ctx context.Context, req *PrecreateByCodeReque
 		return nil, err
 	}
 	if code == nil {
+		prom.PaymentCodeInvalidAttempts.WithLabelValues("not_found").Inc()
 		return nil, errs.New(errs.CodeInvalidParams, "payment code not found", 200)
 	}
 	if code.Status != int(vo.CodeActive) {
+		prom.PaymentCodeInvalidAttempts.WithLabelValues("disabled").Inc()
 		return nil, errs.New(errs.CodeInvalidParams, "payment code disabled", 200)
 	}
 	// 商户单号：码牌 + 时间戳 + 随机，保证唯一（uk_merchant_order 兜底幂等）
@@ -216,6 +225,15 @@ func (s *Service) QueryPayment(ctx context.Context, orderNo string) (*QueryResul
 		return res, nil
 	}
 	adapter := s.router.GetAdapter(order.Channel)
+	if s.merchantAdapters != nil {
+		if ma, err := s.merchantAdapters.GetAdapter(ctx, order.MerchantID, order.Channel); err != nil {
+			s.logger.Warn("resolve merchant adapter for query fail, fallback platform",
+				zap.Uint64("merchant_id", order.MerchantID),
+				zap.String("channel", string(order.Channel)), zap.Error(err))
+		} else if ma != nil {
+			adapter = ma
+		}
+	}
 	if adapter == nil {
 		return res, nil
 	}
@@ -260,6 +278,15 @@ func (s *Service) Pay(ctx context.Context, req *PayRequest) (*PayResponse, error
 		return nil, errs.Wrap(errs.CodeChannelUnavailable, "no available channel", 400, err)
 	}
 	adapter := s.router.GetAdapter(dec.Channel)
+	if s.merchantAdapters != nil {
+		if ma, err := s.merchantAdapters.GetAdapter(ctx, order.MerchantID, dec.Channel); err != nil {
+			s.logger.Warn("resolve merchant adapter for pay fail, fallback platform",
+				zap.Uint64("merchant_id", order.MerchantID),
+				zap.String("channel", string(dec.Channel)), zap.Error(err))
+		} else if ma != nil {
+			adapter = ma
+		}
+	}
 	if adapter == nil {
 		return nil, errs.New(errs.CodeChannelUnavailable, "channel unavailable", 400)
 	}
@@ -319,6 +346,10 @@ func (s *Service) MarkPaid(ctx context.Context, orderNo string, paidAmount int64
 type ListRequest struct {
 	MerchantID uint64
 	Status     string // 空 = 全部状态
+	CodeID     string // 来源收款码短码（可选）
+	Channel    string // 支付通道（可选）
+	Start      *time.Time // 创建时间起（可选）
+	End        *time.Time // 创建时间止（可选）
 	Page       int
 	Size       int
 }
@@ -331,7 +362,16 @@ type ListResponse struct {
 
 // ListOrders 按商户号分页查询订单列表。
 func (s *Service) ListOrders(ctx context.Context, req *ListRequest) (*ListResponse, error) {
-	rows, total, err := s.repo.ListByMerchant(ctx, req.MerchantID, req.Status, req.Page, req.Size)
+	rows, total, err := s.repo.ListByMerchant(ctx, repository.OrderListFilter{
+		MerchantID: req.MerchantID,
+		Status:     req.Status,
+		CodeID:     req.CodeID,
+		Channel:    req.Channel,
+		Start:      req.Start,
+		End:        req.End,
+		Page:       req.Page,
+		Size:       req.Size,
+	})
 	if err != nil {
 		return nil, err
 	}

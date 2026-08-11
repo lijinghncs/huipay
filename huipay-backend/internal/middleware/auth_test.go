@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/huipay/huipay-backend/infra/auth"
 )
 
 // TestMerchantIDFromHeader 有效 / 无效 / 缺失三种头。
@@ -70,4 +72,56 @@ func TestMerchantIDMiddleware(t *testing.T) {
 			t.Fatalf("merchant_id should not be set, got %v", got)
 		}
 	})
+}
+
+// TestNewMerchantAuthBearer 验证 Bearer token 优先于 X-Merchant-Id。
+func TestNewMerchantAuthBearer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	token, err := auth.Sign("test-secret", 42)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Merchant-Id", "999") // 应被 token 覆盖
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = req
+
+	NewMerchantAuth("test-secret", true)(ctx)
+	if got := ctx.GetUint64("merchant_id"); got != 42 {
+		t.Fatalf("merchant_id = %d, want 42 (bearer wins)", got)
+	}
+}
+
+// TestNewMerchantAuthNoTrustHeader 验证 trustHeader=false 时不信任明文头。
+func TestNewMerchantAuthNoTrustHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Merchant-Id", "42")
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = req
+
+	NewMerchantAuth("test-secret", false)(ctx)
+	if _, ok := ctx.Get("merchant_id"); ok {
+		t.Fatal("merchant_id should not be set when trustHeader=false")
+	}
+}
+
+// TestNewMerchantAuthInvalidBearer 无效 token 时按 trustHeader 回退。
+func TestNewMerchantAuthInvalidBearer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer invalid.token.here")
+	req.Header.Set("X-Merchant-Id", "7")
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = req
+
+	NewMerchantAuth("test-secret", true)(ctx)
+	if got := ctx.GetUint64("merchant_id"); got != 7 {
+		t.Fatalf("merchant_id = %d, want 7 (fallback header)", got)
+	}
 }

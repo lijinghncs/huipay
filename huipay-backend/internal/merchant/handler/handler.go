@@ -37,6 +37,47 @@ func (h *Handler) Onboard(c *gin.Context) {
 	errs.OK(c, m)
 }
 
+// Login POST /v1/auth/merchant/login 商户登录。
+func (h *Handler) Login(c *gin.Context) {
+	var req struct {
+		Phone    string `json:"phone" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "invalid request body", 200))
+		return
+	}
+	res, err := h.svc.Login(c.Request.Context(), req.Phone, req.Password)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, res)
+}
+
+// SetLoginPassword POST /v1/admin/merchants/:id/login-password 设置/重置商户登录手机号与密码。
+func (h *Handler) SetLoginPassword(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	var req struct {
+		LoginPhone string `json:"login_phone" binding:"required"`
+		Password   string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "invalid request body", 200))
+		return
+	}
+	m, err := h.svc.SetLoginPassword(c.Request.Context(), id, req.LoginPhone, req.Password)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, m)
+}
+
 // List GET /v1/admin/merchants 商户列表。
 func (h *Handler) List(c *gin.Context) {
 	page := 1

@@ -42,7 +42,6 @@ import (
 	paymentcodeservice "github.com/huipay/huipay-backend/internal/paymentcode/service"
 	paymentcodehandler "github.com/huipay/huipay-backend/internal/paymentcode/handler"
 
-	"github.com/huipay/huipay-backend/internal/payment/channel"
 	notifyhandler "github.com/huipay/huipay-backend/internal/payment/notify"
 	paymentrouter "github.com/huipay/huipay-backend/internal/payment/router"
 	"github.com/huipay/huipay-backend/internal/payment/channel/wechat"
@@ -84,10 +83,13 @@ func main() {
 
 	paymentRouter := paymentrouter.NewDefaultRouter()
 	paymentCodeRepo := paymentcoderepo.NewPaymentCodeRepo(dbConn.Master)
-	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter, paymentCodeRepo)
+
+	// 商户进件服务（依赖实体仓储 + 账户服务；也是商户微信配置 provider，需在微信管理器前装配）
+	entityRepo := merchantrepo.NewEntityRepo(dbConn.Master)
+	merchantSvc := merchantservice.NewService(dbConn.Master, entityRepo, accountSvc, logger, cfg.AuthSecret)
 
 	// 微信通道适配器（enabled 时初始化；失败仅告警，不阻断服务启动）
-	var wxAdapter channel.Adapter
+	var wxAdapter *wechat.Adapter
 	if cfg.WeChat.Enabled {
 		wx, err := wechat.New(cfg.WeChat)
 		if err != nil {
@@ -99,6 +101,14 @@ func main() {
 	if wxAdapter != nil {
 		paymentRouter.Register(wxAdapter)
 	}
+
+	// 按商户微信配置的适配器管理器：商户已配置则用商户参数下单/查单/回调，否则回退平台通道
+	var wxManager *wechat.Manager
+	if wxAdapter != nil {
+		wxManager = wechat.NewManager(wxAdapter, merchantSvc, logger)
+	}
+
+	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter, paymentCodeRepo, wxManager)
 
 	// 对账下载器（微信通道启用且配置完整时初始化；失败仅告警）
 	var billDownloader *reconcilesvc.Downloader
@@ -128,10 +138,6 @@ func main() {
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, logger)
 	splitSvc := splitservice.NewService(ruleEngine, splitExec, accountSvc, logger)
 
-	// 商户进件服务（依赖 entity 仓储 + 账户服务）
-	entityRepo := merchantrepo.NewEntityRepo(dbConn.Master)
-	merchantSvc := merchantservice.NewService(dbConn.Master, entityRepo, accountSvc, logger)
-
 	// 收款码牌服务
 	paymentCodeSvc := paymentcodeservice.NewService(paymentCodeRepo, logger)
 
@@ -143,7 +149,7 @@ func main() {
 	r.Use(obs.GinAccessLog(logger))
 	r.Use(errs.GinErrorHandler(logger))
 	r.Use(middleware.CORS())
-	r.Use(middleware.MerchantID())
+	r.Use(middleware.NewMerchantAuth(cfg.AuthSecret, cfg.TrustMerchantHeader))
 
 	// 7. 注册路由
 	orderH := orderhandler.New(orderSvc, logger)
@@ -151,7 +157,7 @@ func main() {
 	splitH := splithandler.New(splitSvc, logger)
 	merchantH := merchanthandler.New(merchantSvc, logger)
 	paymentCodeH := paymentcodehandler.New(paymentCodeSvc, logger)
-	notifyH := notifyhandler.New(wxAdapter, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
+	notifyH := notifyhandler.New(wxAdapter, wxManager, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 
 	// 微信 OAuth（公众号网页授权，用于 JSAPI 场景获取 openid）
 	var oauthH *oauthhandler.Handler
@@ -170,7 +176,11 @@ func main() {
 		v1.POST("/checkout/:order_no/refund", orderH.Refund)
 		v1.POST("/checkout/:order_no/pay", orderH.Pay)
 
+		// 商户登录（Bearer token 鉴权）
+		v1.POST("/auth/merchant/login", merchantH.Login)
+
 		v1.POST("/notify/wechat", notifyH.HandleWechat)
+		v1.POST("/notify/wechat/:merchant_id", notifyH.HandleWechat)
 		v1.POST("/notify/wechat/refund", notifyH.HandleWechatRefund)
 
 		if oauthH != nil {
@@ -186,6 +196,7 @@ func main() {
 
 		// 管理后台：商户进件、列表、详情、更新、状态、概览
 		v1.POST("/admin/merchants", merchantH.Onboard)
+		v1.POST("/admin/merchants/:id/login-password", merchantH.SetLoginPassword)
 		v1.GET("/admin/merchants", merchantH.List)
 		v1.GET("/admin/merchants/:id", merchantH.Get)
 		v1.PUT("/admin/merchants/:id", merchantH.Update)
@@ -211,7 +222,7 @@ func main() {
 
 	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账）
 	if dbConn.Master != nil {
-		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, 30*time.Second, logger).Start(context.Background())
+		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, wxManager, 30*time.Second, logger).Start(context.Background())
 		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
 		if billDownloader != nil {
 			go reconcilesched.StartDailyReconcile(context.Background(), billDownloader, dbConn.Master, logger)

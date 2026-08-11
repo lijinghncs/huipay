@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +53,7 @@ func classifyError(err error, status int) retryPolicy {
 // Handler 支付回调处理器。
 type Handler struct {
 	wechat             channel.Adapter // 微信通道适配器（未启用时为 nil）
+	merchantWechat     MerchantWechatResolver // 商户级微信适配器解析（可空；回调按 :merchant_id 分流）
 	order              *service.Service
 	accountSvc         *accountsvc.Service
 	ledgerSvc          *ledger.Service
@@ -60,9 +62,15 @@ type Handler struct {
 	logger             *zap.Logger
 }
 
+// MerchantWechatResolver 按商户解析微信适配器（商户级回调验签/解密）。
+type MerchantWechatResolver interface {
+	Get(ctx context.Context, merchantID uint64) (channel.Adapter, error)
+}
+
 // New 构造回调处理器。
 func New(
 	wechat channel.Adapter,
+	merchantWechat MerchantWechatResolver,
 	order *service.Service,
 	accountSvc *accountsvc.Service,
 	ledgerSvc *ledger.Service,
@@ -72,6 +80,7 @@ func New(
 ) *Handler {
 	return &Handler{
 		wechat:             wechat,
+		merchantWechat:     merchantWechat,
 		order:              order,
 		accountSvc:         accountSvc,
 		ledgerSvc:          ledgerSvc,
@@ -81,10 +90,28 @@ func New(
 	}
 }
 
+// resolveWechat 按回调路径 :merchant_id 选择商户级适配器；无商户参数或解析失败回退平台适配器。
+func (h *Handler) resolveWechat(c *gin.Context) channel.Adapter {
+	if h.merchantWechat != nil {
+		if v := c.Param("merchant_id"); v != "" {
+			if id, err := strconv.ParseUint(v, 10, 64); err == nil && id > 0 {
+				if a, err := h.merchantWechat.Get(c.Request.Context(), id); err == nil && a != nil {
+					return a
+				}
+				h.logger.Warn("merchant wechat adapter resolve fail, fallback platform",
+					zap.Uint64("merchant_id", id),
+					zap.String("path", c.Request.URL.Path), zap.Error(err))
+			}
+		}
+	}
+	return h.wechat
+}
+
 // HandleWechat POST /v1/notify/wechat。
 // 成功返回 200（微信停止重试）；校验失败返回 4xx/5xx（微信按策略重试）。
 func (h *Handler) HandleWechat(c *gin.Context) {
-	if h.wechat == nil {
+	adapter := h.resolveWechat(c)
+	if adapter == nil {
 		h.logger.Warn("wechat notify received but channel disabled")
 		c.AbortWithStatus(http.StatusServiceUnavailable)
 		return
@@ -99,7 +126,7 @@ func (h *Handler) HandleWechat(c *gin.Context) {
 
 	headers := extractNotifyHeaders(c)
 
-	payload, err := h.wechat.VerifyNotify(c.Request.Context(), raw, headers)
+	payload, err := adapter.VerifyNotify(c.Request.Context(), raw, headers)
 	if err != nil {
 		h.logger.Warn("wechat notify verify fail",
 			zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
@@ -189,7 +216,8 @@ func (h *Handler) credit(ctx context.Context, merchantID uint64, orderNo string,
 // HandleWechatRefund POST /v1/notify/wechat/refund。
 // 本轮仅验签 + 解密 + log，不做钱包反向入账（完整退款链路放 P2 退款服务）。
 func (h *Handler) HandleWechatRefund(c *gin.Context) {
-	if h.wechat == nil {
+	adapter := h.resolveWechat(c)
+	if adapter == nil {
 		h.logger.Warn("wechat refund notify received but channel disabled")
 		c.AbortWithStatus(http.StatusServiceUnavailable)
 		return
@@ -203,7 +231,7 @@ func (h *Handler) HandleWechatRefund(c *gin.Context) {
 	}
 
 	headers := extractNotifyHeaders(c)
-	plain, err := h.wechat.VerifyAndDecrypt(c.Request.Context(), raw, headers)
+	plain, err := adapter.VerifyAndDecrypt(c.Request.Context(), raw, headers)
 	if err != nil {
 		h.logger.Warn("wechat refund verify fail",
 			zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))

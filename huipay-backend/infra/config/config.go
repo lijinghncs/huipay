@@ -17,6 +17,8 @@ type Config struct {
 	MySQLSlave  string `mapstructure:"mysql_slave"`  // 从库 DSN（可空）
 	AppName     string `mapstructure:"app_name"`
 	AppEnv      string `mapstructure:"app_env"` // local / staging / production
+	AuthSecret  string `mapstructure:"auth_secret"` // 商户登录 token 签名密钥（生产必配）
+	TrustMerchantHeader bool `mapstructure:"trust_merchant_header"` // 是否信任 X-Merchant-Id 明文头（仅开发；生产置 false）
 	WeChat      WeChatConfig `mapstructure:"wechat"`
 }
 
@@ -55,6 +57,7 @@ func Load() *Config {
 	v.SetDefault("log_level", "info")
 	v.SetDefault("app_name", "huipay-backend")
 	v.SetDefault("app_env", "local")
+	v.SetDefault("trust_merchant_header", true)
 	v.SetDefault("mysql_master", "huipay:huipay@tcp(127.0.0.1:3306)/huipay_main?charset=utf8mb4&parseTime=True&loc=Local")
 
 	if err := v.ReadInConfig(); err != nil {

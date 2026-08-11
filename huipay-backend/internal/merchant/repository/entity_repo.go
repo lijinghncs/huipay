@@ -19,6 +19,8 @@ type EntityModel struct {
 	KYCStatus  int        `gorm:"column:kyc_status;not null;default:0"`
 	KYCData    string     `gorm:"column:kyc_data;type:json"`
 	WechatConfig string  `gorm:"column:wechat_config;type:json"` // 商户微信支付配置（敏感字段已 AES 加密）
+	LoginPhone string     `gorm:"column:login_phone;size:32;uniqueIndex:uk_login_phone"`      // 登录手机号
+	LoginPasswordHash string `gorm:"column:login_password_hash;size:128"`                     // 登录密码哈希（bcrypt）
 	Status     int        `gorm:"column:status;not null;default:1"`
 	CreatedAt  time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt  time.Time  `gorm:"column:updated_at;autoUpdateTime"`
@@ -72,6 +74,25 @@ func (r *EntityRepo) GetByID(ctx context.Context, id uint64) (*EntityModel, erro
 		return nil, err
 	}
 	return &m, nil
+}
+
+// GetByLoginPhone 按登录手机号查询主体。
+func (r *EntityRepo) GetByLoginPhone(ctx context.Context, phone string) (*EntityModel, error) {
+	var m EntityModel
+	if err := r.db.WithContext(ctx).Where("login_phone = ? AND deleted_at IS NULL", phone).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// UpdateLoginPassword 更新登录密码哈希。
+func (r *EntityRepo) UpdateLoginPassword(ctx context.Context, id uint64, phone, passwordHash string) error {
+	return r.db.WithContext(ctx).Model(&EntityModel{}).
+		Where("id = ?", id).
+		Updates(map[string]any{"login_phone": phone, "login_password_hash": passwordHash}).Error
 }
 
 // UpdateProfile 更新主体基础资料（名称 + 商户身份认证资料 JSON）。

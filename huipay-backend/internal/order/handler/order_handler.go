@@ -3,6 +3,7 @@ package handler
 
 import (
 	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -148,7 +149,7 @@ func (h *Handler) Refund(c *gin.Context) {
 }
 
 // List GET /v1/checkout/list。
-// 查询参数：status（可空）、page（默认 1）、size（默认 20，上限 100）。
+// 查询参数：status / code_id / channel / start / end（均可空）、page（默认 1）、size（默认 20，上限 100）。
 // 商户号取自 X-Merchant-Id 中间件注入的上下文。
 func (h *Handler) List(c *gin.Context) {
 	merchantID := c.GetUint64("merchant_id")
@@ -157,13 +158,25 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 	page, size := parsePageSize(c)
-	status := c.Query("status")
-	resp, err := h.svc.ListOrders(c.Request.Context(), &service.ListRequest{
+	req := &service.ListRequest{
 		MerchantID: merchantID,
-		Status:     status,
+		Status:     c.Query("status"),
+		CodeID:     c.Query("code_id"),
+		Channel:    c.Query("channel"),
 		Page:       page,
 		Size:       size,
-	})
+	}
+	if v := c.Query("start"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			req.Start = &t
+		}
+	}
+	if v := c.Query("end"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			req.End = &t
+		}
+	}
+	resp, err := h.svc.ListOrders(c.Request.Context(), req)
 	if err != nil {
 		_ = c.Error(err)
 		return

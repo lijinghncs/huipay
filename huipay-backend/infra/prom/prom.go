@@ -25,6 +25,10 @@ var (
 	IdempotentHit = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "idempotent_hit_total", Help: "幂等命中次数",
 	})
+	PaymentCodeInvalidAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "payment_code_invalid_attempts_total",
+		Help: "码牌异常请求计数（按原因：not_found / disabled / amount_out_of_range）",
+	}, []string{"reason"})
 )
 
 // MustRegister 注册自定义指标（ProMetrics 已通过 promauto 自动注册）。

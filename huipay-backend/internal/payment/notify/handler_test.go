@@ -62,6 +62,17 @@ func (m *mockAdapter) VerifyAndDecrypt(ctx context.Context, raw []byte, headers 
 	return raw, nil
 }
 
+// mockResolver 记录请求的 merchant_id 并返回固定适配器。
+type mockResolver struct {
+	got     uint64
+	adapter channel.Adapter
+}
+
+func (r *mockResolver) Get(ctx context.Context, merchantID uint64) (channel.Adapter, error) {
+	r.got = merchantID
+	return r.adapter, nil
+}
+
 type handlerHB struct {
 	db  *gorm.DB
 	svc *Handler
@@ -192,6 +203,64 @@ func TestHandleWechatCreditFail(t *testing.T) {
 	}
 }
 
+// TestHandleWechatMerchantRouteUsesMerchantAdapter 验证 /v1/notify/wechat/:merchant_id
+// 路由会按商户解析适配器（商户级配置生效），而不是平台适配器。
+func TestHandleWechatMerchantRouteUsesMerchantAdapter(t *testing.T) {
+	db := openMem(t)
+	createOrder(t, db, "HP-M1", 100)
+	createOrder(t, db, "HP-PLAT", 100)
+	settle := seedSettlement(t, db, 1000)
+
+	logger := zap.NewNop()
+	walletRepo := repository.NewWalletRepo(db)
+	journalRepo := repository.NewJournalRepo(db)
+	ledgerSvc := ledger.NewService(walletRepo, journalRepo, logger)
+	accountSvc := accountsvc.NewService(ledgerSvc, walletRepo, journalRepo, logger)
+	orderSvc := orderservice.NewService(db, logger, router.NewDefaultRouter(), nil, nil)
+	idemStore := idem.NewMySQLStore(db)
+
+	// 平台适配器指向 HP-PLAT，商户适配器指向 HP-M1：若分流生效，只入账 HP-M1。
+	platform := &mockAdapter{payload: &channel.NotifyPayload{
+		OrderNo: "HP-PLAT", ChannelTradeNo: "txn-plat", NotifyID: "nid-plat", Paid: true, PaidAmount: 100,
+	}}
+	merchant := &mockAdapter{payload: &channel.NotifyPayload{
+		OrderNo: "HP-M1", ChannelTradeNo: "txn-m1", NotifyID: "nid-m1", Paid: true, PaidAmount: 100,
+	}}
+	resolver := &mockResolver{adapter: merchant}
+	h := New(platform, resolver, orderSvc, accountSvc, ledgerSvc, idemStore, settle, logger)
+	hb := &handlerHB{db: db, svc: h}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/v1/notify/wechat/:merchant_id", hb.svc.HandleWechat)
+	req := httptest.NewRequest(http.MethodPost, "/v1/notify/wechat/5", bytes.NewReader([]byte(`{}`)))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	if resolver.got != 5 {
+		t.Fatalf("resolver merchant_id = %d, want 5", resolver.got)
+	}
+	// 商户订单入账
+	var m1 model.OrderModel
+	if err := db.Where("order_no = ?", "HP-M1").First(&m1).Error; err != nil {
+		t.Fatalf("get HP-M1: %v", err)
+	}
+	if m1.Status != string(vo.OrderPaid) {
+		t.Fatalf("HP-M1 status = %s, want PAID", m1.Status)
+	}
+	// 平台订单未入账
+	var mplat model.OrderModel
+	if err := db.Where("order_no = ?", "HP-PLAT").First(&mplat).Error; err != nil {
+		t.Fatalf("get HP-PLAT: %v", err)
+	}
+	if mplat.Status == string(vo.OrderPaid) {
+		t.Fatal("HP-PLAT should NOT be paid (platform adapter not used)")
+	}
+}
+
 func openMem(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(newMemDSN()), &gorm.Config{})
@@ -211,9 +280,9 @@ func newHandlerOnDB(t *testing.T, db *gorm.DB, payload *channel.NotifyPayload, s
 	journalRepo := repository.NewJournalRepo(db)
 	ledgerSvc := ledger.NewService(walletRepo, journalRepo, logger)
 	accountSvc := accountsvc.NewService(ledgerSvc, walletRepo, journalRepo, logger)
-	orderSvc := orderservice.NewService(db, logger, router.NewDefaultRouter(), nil)
+	orderSvc := orderservice.NewService(db, logger, router.NewDefaultRouter(), nil, nil)
 	idemStore := idem.NewMySQLStore(db)
-	h := New(&mockAdapter{payload: payload}, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
+	h := New(&mockAdapter{payload: payload}, nil, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 	return &handlerHB{db: db, svc: h}
 }
 

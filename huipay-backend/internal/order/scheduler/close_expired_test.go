@@ -85,7 +85,7 @@ func newSchedulerTest(ctx context.Context, t *testing.T) (*gorm.DB, *mockAdapter
 	adapter := &mockAdapter{code: vo.ChannelWeChat}
 	rt := router.NewDefaultRouter()
 	rt.Register(adapter)
-	s := NewCloseExpiredScheduler(db, rt, time.Second, zap.NewNop())
+	s := NewCloseExpiredScheduler(db, rt, nil, time.Second, zap.NewNop())
 	return db, adapter, s
 }
 

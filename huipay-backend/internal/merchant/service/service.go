@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"golang.org/x/crypto/bcrypt"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
 	accountservice "github.com/huipay/huipay-backend/internal/account/service"
 	"github.com/huipay/huipay-backend/internal/domain/entity"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
+	"github.com/huipay/huipay-backend/infra/auth"
+	"github.com/huipay/huipay-backend/infra/config"
 	"github.com/huipay/huipay-backend/infra/errs"
 	merchantrepo "github.com/huipay/huipay-backend/internal/merchant/repository"
 	"github.com/huipay/huipay-backend/internal/merchant/secretcrypto"
@@ -37,6 +40,8 @@ type OnboardRequest struct {
 	ContactName  string `json:"contact_name"`  // 联系人
 	ContactPhone string `json:"contact_phone"` // 联系电话
 	WechatConfig *entity.WechatConfig `json:"wechat_config"` // 微信支付配置（敏感字段加密入库）
+	LoginPhone   string `json:"login_phone"`   // 登录手机号（可选，进件时设置）
+	LoginPassword string `json:"login_password"` // 初始登录密码（可选，>=6 位）
 }
 
 // WechatConfigView 微信支付配置读视图（敏感字段只回 configured 标记，不回显明文）。
@@ -87,8 +92,15 @@ type MerchantDetail struct {
 	Frozen     int64          `json:"frozen"`
 	PreFrozen  int64          `json:"pre_frozen"`
 	WechatConfig *WechatConfigView `json:"wechat_config"` // 微信支付配置（敏感字段仅回 configured 标记）
+	LoginPhone   string            `json:"login_phone"`  // 登录手机号
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
+}
+
+// LoginResult 商户登录结果。
+type LoginResult struct {
+	Token    string    `json:"token"`
+	Merchant *Merchant `json:"merchant"`
 }
 
 // UpdateRequest 商户资料更新请求。
@@ -127,11 +139,12 @@ type Service struct {
 	entityRepo *merchantrepo.EntityRepo
 	accountSvc *accountservice.Service
 	logger     *zap.Logger
+	authSecret string
 }
 
 // NewService 构造 Service。
-func NewService(db *gorm.DB, entityRepo *merchantrepo.EntityRepo, accountSvc *accountservice.Service, logger *zap.Logger) *Service {
-	return &Service{db: db, entityRepo: entityRepo, accountSvc: accountSvc, logger: logger}
+func NewService(db *gorm.DB, entityRepo *merchantrepo.EntityRepo, accountSvc *accountservice.Service, logger *zap.Logger, authSecret string) *Service {
+	return &Service{db: db, entityRepo: entityRepo, accountSvc: accountSvc, logger: logger, authSecret: authSecret}
 }
 
 // Onboard 商户进件：事务内创建主体(MERCHANT)与钱包，保证原子性。
@@ -173,9 +186,20 @@ func (s *Service) Onboard(ctx context.Context, req *OnboardRequest) (*Merchant, 
 		wcJSON = string(b)
 	}
 
+	// 进件可选设置登录手机号 + 初始密码（bcrypt 哈希入库）
+	loginPhone := strings.TrimSpace(req.LoginPhone)
+	var passwordHash string
+	if req.LoginPassword != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.LoginPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("hash login password: %w", err)
+		}
+		passwordHash = string(hash)
+	}
+
 	// 商户号冲突时换号重试；非唯一键错误直接返回，不掩盖真实原因
 	for i := 0; i < 3; i++ {
-		m, err := s.onboardOnce(ctx, genEntityCode(), req, entityType, string(kycBytes), wcJSON)
+		m, err := s.onboardOnce(ctx, genEntityCode(), req, entityType, string(kycBytes), wcJSON, loginPhone, passwordHash)
 		if err == nil {
 			return m, nil
 		}
@@ -188,7 +212,7 @@ func (s *Service) Onboard(ctx context.Context, req *OnboardRequest) (*Merchant, 
 }
 
 // onboardOnce 在单个事务内完成「创建主体 + 开通钱包」，任一步失败整体回滚。
-func (s *Service) onboardOnce(ctx context.Context, code string, req *OnboardRequest, entityType vo.EntityType, kycData, wechatConfig string) (*Merchant, error) {
+func (s *Service) onboardOnce(ctx context.Context, code string, req *OnboardRequest, entityType vo.EntityType, kycData, wechatConfig, loginPhone, passwordHash string) (*Merchant, error) {
 	tx := s.entityRepo.DB().WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return nil, fmt.Errorf("begin tx: %w", tx.Error)
@@ -207,6 +231,8 @@ func (s *Service) onboardOnce(ctx context.Context, code string, req *OnboardRequ
 		KYCStatus:    1, // 进件完成，资料已提交
 		KYCData:      kycData,
 		WechatConfig: wechatConfig,
+		LoginPhone:   loginPhone,
+		LoginPasswordHash: passwordHash,
 		Status:       1,
 	}
 	if err := tx.WithContext(ctx).Create(m).Error; err != nil {
@@ -279,8 +305,10 @@ func (s *Service) fillMerchant(ctx context.Context, e *merchantrepo.EntityModel)
 		Status:     e.Status,
 		CreatedAt:  e.CreatedAt,
 	}
-	if w, err := s.accountSvc.GetWallet(ctx, e.ID); err == nil && w != nil {
-		m.WalletNo = w.WalletNo
+	if s.accountSvc != nil {
+		if w, err := s.accountSvc.GetWallet(ctx, e.ID); err == nil && w != nil {
+			m.WalletNo = w.WalletNo
+		}
 	}
 	return m
 }
@@ -310,14 +338,67 @@ func (s *Service) Get(ctx context.Context, id uint64) (*MerchantDetail, error) {
 			d.KYCData = m
 		}
 	}
-	if w, err := s.accountSvc.GetWallet(ctx, e.ID); err == nil && w != nil {
-		d.WalletNo = w.WalletNo
-		d.Balance = w.Balance
-		d.Frozen = w.Frozen
-		d.PreFrozen = w.PreFrozen
+	if s.accountSvc != nil {
+		if w, err := s.accountSvc.GetWallet(ctx, e.ID); err == nil && w != nil {
+			d.WalletNo = w.WalletNo
+			d.Balance = w.Balance
+			d.Frozen = w.Frozen
+			d.PreFrozen = w.PreFrozen
+		}
 	}
 	d.WechatConfig = s.wechatConfigView(e.WechatConfig)
+	d.LoginPhone = e.LoginPhone
 	return d, nil
+}
+
+// Login 商户登录：手机号 + 密码 → token（HMAC 签名，24h 有效）。
+func (s *Service) Login(ctx context.Context, phone, password string) (*LoginResult, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" || password == "" {
+		return nil, errs.New(errs.CodeInvalidParams, "phone and password required", 400)
+	}
+	if s.authSecret == "" {
+		return nil, errs.New(errs.CodeInternalError, "auth secret not configured", 500)
+	}
+	e, err := s.entityRepo.GetByLoginPhone(ctx, phone)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil || e.LoginPasswordHash == "" {
+		return nil, errs.New(errs.CodeUnauthorized, "手机号或密码错误", 401)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(e.LoginPasswordHash), []byte(password)) != nil {
+		return nil, errs.New(errs.CodeUnauthorized, "手机号或密码错误", 401)
+	}
+	token, err := auth.Sign(s.authSecret, e.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Token: token, Merchant: s.fillMerchant(ctx, e)}, nil
+}
+
+// SetLoginPassword 设置/重置商户登录手机号与密码（管理端）。
+func (s *Service) SetLoginPassword(ctx context.Context, id uint64, phone, password string) (*Merchant, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" || len(password) < 6 {
+		return nil, errs.New(errs.CodeInvalidParams, "login_phone and password (>=6 chars) required", 400)
+	}
+	e, err := s.entityRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, errs.New(errs.CodeInvalidParams, "merchant not found", 404)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("hash login password: %w", err)
+	}
+	if err := s.entityRepo.UpdateLoginPassword(ctx, id, phone, string(hash)); err != nil {
+		return nil, err
+	}
+	e.LoginPhone = phone
+	return s.fillMerchant(ctx, e), nil
 }
 
 // Update 更新商户基础资料（名称 + 商户身份认证信息）。
@@ -542,6 +623,61 @@ func (s *Service) UpdateWechatConfig(ctx context.Context, id uint64, req *Update
 		return nil, err
 	}
 	return s.wechatConfigView(string(b)), nil
+}
+
+// GetRuntimeConfig 返回商户微信支付运行配置（敏感字段已解密），供支付链路按商户使用。
+// 未配置 / enabled=false / 配置损坏时返回 (nil, nil)；敏感字段解密失败返回错误。
+func (s *Service) GetRuntimeConfig(ctx context.Context, merchantID uint64) (*config.WeChatConfig, error) {
+	if merchantID == 0 {
+		return nil, nil
+	}
+	e, err := s.entityRepo.GetByID(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil || e.WechatConfig == "" || e.WechatConfig == "null" {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(e.WechatConfig), &m); err != nil {
+		s.logger.Warn("wechat_config unmarshal fail, treat as unconfigured",
+			zap.Uint64("merchant_id", merchantID), zap.Error(err))
+		return nil, nil
+	}
+	if !boolVal(m["enabled"]) {
+		return nil, nil
+	}
+
+	cfg := &config.WeChatConfig{
+		Enabled:          true,
+		MchID:            strVal(m["mchid"]),
+		AppID:            strVal(m["appid"]),
+		MerchantSerialNo: strVal(m["merchant_serial_no"]),
+		PlatformSerialNo: strVal(m["platform_serial_no"]),
+		NotifyBaseURL:    strVal(m["notify_base_url"]),
+	}
+	// 敏感字段 AES 解密
+	secrets := []struct {
+		key string
+		dst *string
+	}{
+		{"app_secret", &cfg.AppSecret},
+		{"api_v3_key", &cfg.APIv3Key},
+		{"merchant_private_key", &cfg.MerchantPrivateKey},
+		{"platform_public_key", &cfg.PlatformPublicKey},
+	}
+	for _, f := range secrets {
+		enc := strVal(m[f.key])
+		if enc == "" {
+			continue
+		}
+		plain, err := secretcrypto.Decrypt(enc)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt wechat config %s for merchant %d: %w", f.key, merchantID, err)
+		}
+		*f.dst = plain
+	}
+	return cfg, nil
 }
 
 // strVal 取 map 值字符串。

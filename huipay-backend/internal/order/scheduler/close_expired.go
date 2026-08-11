@@ -11,20 +11,27 @@ import (
 
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/order/model"
+	"github.com/huipay/huipay-backend/internal/payment/channel"
 	"github.com/huipay/huipay-backend/internal/payment/router"
 )
 
+// MerchantAdapterResolver 按商户解析通道适配器（商户级微信配置生效；nil 表示走平台通道）。
+type MerchantAdapterResolver interface {
+	GetAdapter(ctx context.Context, merchantID uint64, code vo.ChannelCode) (channel.Adapter, error)
+}
+
 // CloseExpiredScheduler 超时关单调度器。
 type CloseExpiredScheduler struct {
-	db       *gorm.DB
-	router   *router.Router
-	logger   *zap.Logger
-	interval time.Duration // 本轮写死 30 秒，不走配置
+	db               *gorm.DB
+	router           *router.Router
+	merchantAdapters MerchantAdapterResolver
+	logger           *zap.Logger
+	interval         time.Duration // 本轮写死 30 秒，不走配置
 }
 
 // NewCloseExpiredScheduler 构造调度器。
-func NewCloseExpiredScheduler(db *gorm.DB, r *router.Router, interval time.Duration, logger *zap.Logger) *CloseExpiredScheduler {
-	return &CloseExpiredScheduler{db: db, router: r, logger: logger, interval: interval}
+func NewCloseExpiredScheduler(db *gorm.DB, r *router.Router, merchantAdapters MerchantAdapterResolver, interval time.Duration, logger *zap.Logger) *CloseExpiredScheduler {
+	return &CloseExpiredScheduler{db: db, router: r, merchantAdapters: merchantAdapters, logger: logger, interval: interval}
 }
 
 // Start 启动定时扫描，阻塞运行直到 ctx 取消。
@@ -50,7 +57,7 @@ func (s *CloseExpiredScheduler) runOnce(ctx context.Context) {
 
 	var rows []model.OrderModel
 	if err := s.db.WithContext(ctx).
-		Select("order_no", "channel").
+		Select("order_no", "merchant_id", "channel").
 		Where("status = ? AND expire_at < ?", string(vo.OrderCreated), time.Now()).
 		Limit(100).
 		Find(&rows).Error; err != nil {
@@ -61,7 +68,17 @@ func (s *CloseExpiredScheduler) runOnce(ctx context.Context) {
 	for _, o := range rows {
 		// 先调通道关单（失败仅 log，不影响 DB 关单）
 		if o.Channel != "" {
-			if a := s.router.GetAdapter(o.Channel); a != nil {
+			a := s.router.GetAdapter(o.Channel)
+			if s.merchantAdapters != nil {
+				if ma, err := s.merchantAdapters.GetAdapter(ctx, o.MerchantID, o.Channel); err != nil {
+					s.logger.Warn("resolve merchant adapter for close fail, fallback platform",
+						zap.Uint64("merchant_id", o.MerchantID),
+						zap.String("channel", string(o.Channel)), zap.Error(err))
+				} else if ma != nil {
+					a = ma
+				}
+			}
+			if a != nil {
 				if err := a.CloseOrder(ctx, o.OrderNo); err != nil {
 					s.logger.Warn("close order channel call fail",
 						zap.String("order_no", o.OrderNo),

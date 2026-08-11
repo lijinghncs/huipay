@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/huipay/huipay-backend/infra/config"
@@ -18,14 +19,24 @@ const defaultNotifyPath = "/v1/notify/wechat"
 
 // Adapter 微信支付适配器。
 type Adapter struct {
-	client        *Client
-	cfg           config.WeChatConfig
-	certProvider  CertProvider
+	client       *Client
+	cfg          config.WeChatConfig
+	certProvider CertProvider
+	notifyPath   string // 回调路径；商户级适配器带 :merchant_id，用于回调分流
 }
 
 // New 构造微信适配器，解析商户证书并初始化 V3 客户端。
 // 商户私钥/平台公钥缺失时返回错误，避免通道在未配置时被错误启用。
 func New(cfg config.WeChatConfig) (*Adapter, error) {
+	return newAdapter(cfg, defaultNotifyPath)
+}
+
+// NewForMerchant 构造商户级微信适配器：回调路径携带 merchant_id，供微信回调按商户分流。
+func NewForMerchant(cfg config.WeChatConfig, merchantID uint64) (*Adapter, error) {
+	return newAdapter(cfg, fmt.Sprintf("/v1/notify/wechat/%d", merchantID))
+}
+
+func newAdapter(cfg config.WeChatConfig, notifyPath string) (*Adapter, error) {
 	client, err := NewClient(cfg)
 	if err != nil {
 		return nil, err
@@ -34,11 +45,28 @@ func New(cfg config.WeChatConfig) (*Adapter, error) {
 		client:       client,
 		cfg:          cfg,
 		certProvider: &StaticCertProvider{key: client.platKey},
+		notifyPath:   notifyPath,
 	}, nil
 }
 
 // Code 通道编码。
 func (a *Adapter) Code() vo.ChannelCode { return vo.ChannelWeChat }
+
+// NotifyPath 返回回调路径（供回调分流诊断/日志使用）。
+func (a *Adapter) NotifyPath() string { return a.notifyPath }
+
+// Config 返回适配器使用的运行配置（供回调分流/诊断使用）。
+func (a *Adapter) Config() config.WeChatConfig { return a.cfg }
+
+// MerchantID 从回调路径解析商户 ID；平台级适配器返回 0。
+func (a *Adapter) MerchantID() uint64 {
+	if len(a.notifyPath) <= len(defaultNotifyPath) || a.notifyPath[:len(defaultNotifyPath)] != defaultNotifyPath {
+		return 0
+	}
+	// 路径形如 /v1/notify/wechat/{id}
+	id, _ := strconv.ParseUint(a.notifyPath[len(defaultNotifyPath)+1:], 10, 64)
+	return id
+}
 
 // CreatePayment 预下单：按支付场景分派到 Native/H5/JSAPI。
 func (a *Adapter) CreatePayment(ctx context.Context, req *channel.CreatePaymentRequest) (*channel.CreatePaymentResponse, error) {
@@ -49,7 +77,7 @@ func (a *Adapter) CreatePayment(ctx context.Context, req *channel.CreatePaymentR
 
 	notifyURL := req.NotifyURL
 	if notifyURL == "" {
-		notifyURL = a.cfg.NotifyBaseURL + defaultNotifyPath
+		notifyURL = a.cfg.NotifyBaseURL + a.notifyPath
 	}
 	timeExpire := ""
 	if req.ExpireSecs > 0 {

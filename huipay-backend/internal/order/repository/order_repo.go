@@ -4,6 +4,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -55,32 +56,52 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, orderNo, status, splitStat
 		Updates(map[string]any{"status": status, "split_status": splitStatus}).Error
 }
 
-// ListByMerchant 按商户号分页查询订单（created_at DESC）。
-// status 为空表示不过滤状态。返回订单列表与总数。
-func (r *OrderRepo) ListByMerchant(ctx context.Context, merchantID uint64, status string, page, size int) ([]model.OrderModel, int64, error) {
-	if page < 1 {
-		page = 1
+// OrderListFilter 订单列表过滤条件。
+type OrderListFilter struct {
+	MerchantID uint64
+	Status     string     // 空 = 全部状态
+	CodeID     string     // 来源收款码短码（可选）
+	Channel    string     // 支付通道（可选）
+	Start      *time.Time // 创建时间起（可选）
+	End        *time.Time // 创建时间止（可选）
+	Page       int
+	Size       int
+}
+
+// ListByMerchant 按商户号分页查询订单（created_at DESC），支持状态/码牌/通道/时间过滤。
+func (r *OrderRepo) ListByMerchant(ctx context.Context, f OrderListFilter) ([]model.OrderModel, int64, error) {
+	if f.Page < 1 {
+		f.Page = 1
 	}
-	if size <= 0 || size > 100 {
-		size = 20
+	if f.Size <= 0 || f.Size > 100 {
+		f.Size = 20
 	}
 
 	q := r.db.WithContext(ctx).Model(&model.OrderModel{})
-	if status != "" {
-		q = q.Where("status = ?", status)
+	q = q.Where("merchant_id = ?", f.MerchantID)
+	if f.Status != "" {
+		q = q.Where("status = ?", f.Status)
+	}
+	if f.CodeID != "" {
+		q = q.Where("code_id = ?", f.CodeID)
+	}
+	if f.Channel != "" {
+		q = q.Where("channel = ?", f.Channel)
+	}
+	if f.Start != nil {
+		q = q.Where("created_at >= ?", *f.Start)
+	}
+	if f.End != nil {
+		q = q.Where("created_at <= ?", *f.End)
 	}
 
 	var total int64
-	if err := q.Where("merchant_id = ?", merchantID).Count(&total).Error; err != nil {
+	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var rows []model.OrderModel
-	if err := q.Where("merchant_id = ?", merchantID).
-		Order("created_at DESC").
-		Offset((page - 1) * size).
-		Limit(size).
-		Find(&rows).Error; err != nil {
+	if err := q.Order("created_at DESC").Offset((f.Page - 1) * f.Size).Limit(f.Size).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
 	return rows, total, nil
