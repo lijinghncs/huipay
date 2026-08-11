@@ -23,7 +23,7 @@ import {
   SearchOutlined,
   ReloadOutlined,
   EditOutlined,
-  SettingOutlined, LockOutlined,
+  SettingOutlined,
   LockOutlined,
   ArrowRightOutlined,
   DownOutlined,
@@ -112,19 +112,6 @@ export const Merchants: React.FC = () => {
   const [editForm] = Form.useForm();
   const [pwId, setPwId] = useState<number | null>(null);
   const [pwForm] = Form.useForm();
-  const [pwId, setPwId] = useState<number | null>(null);
-  const [pwForm] = Form.useForm();
-
-  const setPassword = useMutation({
-    mutationFn: ({ id, phone, password }: { id: number; phone: string; password: string }) =>
-      setMerchantLoginPassword(id, phone, password),
-    onSuccess: () => {
-      message.success('登录手机号/密码已设置');
-      setPwId(null);
-      pwForm.resetFields();
-    },
-    onError: (err) => message.error(`设置失败：${err.message}`),
-  });
 
   const setPassword = useMutation({
     mutationFn: ({ id, phone, password }: { id: number; phone: string; password: string }) =>
@@ -298,11 +285,6 @@ export const Merchants: React.FC = () => {
               更多 <DownOutlined style={{ fontSize: 10 }} />
             </Button>
           </Dropdown>
-          <Tooltip title="设置登录手机号与密码（商户工作台登录用）">
-            <Button type="link" size="small" icon={<LockOutlined />} onClick={() => { setPwId(r.id); pwForm.resetFields(); }}>
-              登录密码
-            </Button>
-          </Tooltip>
         </Space>
       ),
     },
