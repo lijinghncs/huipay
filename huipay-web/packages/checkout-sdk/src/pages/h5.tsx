@@ -2,15 +2,17 @@
 // 真实部署：路由 /h5 → https://checkout.huipay.cn/h5
 // URL 参数：order 必填（订单号）；code 可选（收款码牌短码，无 order 时用于码牌建单）；
 // amount/discount/merchant_id 可选。
+//
+// 码牌流程：输入金额 → 确认支付 → 建单 + 发支付 + 拉起微信支付窗口 → 轮询订单状态 → 结果页。
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { App as AntApp } from 'antd';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { HuiPayCheckout } from '../components/Checkout';
 import { AmountInput } from '../components/AmountInput';
 import { PaymentResult } from '../components/PaymentResult';
 import { useOrder } from '../hooks/useCheckout';
 import { createApi } from '@huipay/shared/api-client';
-import { ensureWechatOpenId, isWeixinBrowser, readOpenId } from '../utils/wechatOAuth';
+import { ensureWechatOpenId, resolveOpenId } from '../utils/wechatOAuth';
 import '../styles/global.css';
 
 const queryClient = new QueryClient();
@@ -27,95 +29,99 @@ function App() {
   const [createdOrder, setCreatedOrder] = React.useState('');
   const [payError, setPayError] = React.useState('');
 
+  // 注意：所有 Hooks 必须在任何条件 return 之前调用，保证 Hook 顺序稳定。
+  const activeOrderNo = orderNo || createdOrder;
+  const { data: order, isLoading } = useOrder(activeOrderNo, !!activeOrderNo);
+
   // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
   if (ensureWechatOpenId(apiBase)) {
     return <div style={{ padding: 24 }}>微信授权中…</div>;
   }
-  const openid = readOpenId();
+  const openid = resolveOpenId();
 
-  // 码牌模式：无 order 但有 code → 先输入金额建单
-  if (!orderNo && code) {
+  // 支付失败：展示失败页，重试回到收银台（优先于码牌/支付分支判断）
+  if (payError) {
     return (
-      <QueryClientProvider client={queryClient}>
-        <div style={{ minHeight: '100vh', background: '#f6f7fb', display: 'flex', justifyContent: 'center' }}>
-          <AmountInput code={code} onCreated={setCreatedOrder} />
-        </div>
-      </QueryClientProvider>
+      <PaymentResult
+        type="failed"
+        message={payError}
+        onRetry={() => setPayError('')}
+        retryText={code ? '重新收款' : '重新支付'}
+      />
     );
   }
 
-  const activeOrderNo = orderNo || createdOrder;
-  const { data: order, isLoading } = useOrder(activeOrderNo, !!activeOrderNo);
+  // 码牌模式：无 order 且有 code 时先输入金额建单；建单即拉起支付，成功后进入结果页
+  if (!orderNo && code && !createdOrder) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center' }}>
+        <AmountInput
+          code={code}
+          openId={openid}
+          onCreated={setCreatedOrder}
+          onError={setPayError}
+        />
+      </div>
+    );
+  }
 
   // 支付结果页：成功 / 已关闭
   if (order?.status === 'PAID') {
     return (
-      <QueryClientProvider client={queryClient}>
-        <PaymentResult
-          type="success"
-          orderNo={order.order_no}
-          amount={order.paid_amount || order.amount}
-          paidAt={order.paid_at}
-        />
-      </QueryClientProvider>
+      <PaymentResult
+        type="success"
+        orderNo={order.order_no}
+        amount={order.paid_amount || order.amount}
+        paidAt={order.paid_at}
+      />
     );
   }
   if (order?.status === 'CLOSED') {
     return (
-      <QueryClientProvider client={queryClient}>
-        <PaymentResult
-          type="closed"
-          orderNo={order.order_no}
-          onRetry={code ? () => (window.location.href = `/h5?code=${code}`) : undefined}
-          retryText="重新扫码收款"
-        />
-      </QueryClientProvider>
+      <PaymentResult
+        type="closed"
+        orderNo={order.order_no}
+        onRetry={code ? () => (window.location.href = `/h5?code=${code}`) : undefined}
+        retryText="重新扫码收款"
+      />
     );
   }
-
-  // 支付失败：展示失败页，重试回到收银台
-  if (payError) {
-    return (
-      <QueryClientProvider client={queryClient}>
-        <PaymentResult type="failed" message={payError} onRetry={() => setPayError('')} />
-      </QueryClientProvider>
-    );
-  }
-
-  // 若订单已带 pay_url 且为 H5 场景，自动跳转微信支付
-  React.useEffect(() => {
-    const payUrl = (order as unknown as { pay_url?: string })?.pay_url;
-    if (payUrl) {
-      window.location.href = payUrl;
-    }
-  }, [order]);
 
   if (isLoading) {
     return <div style={{ padding: 24 }}>加载中…</div>;
   }
 
-  const amount = order?.amount ?? Number(params.get('amount') ?? 0);
-  const discount = Number(params.get('discount') ?? 0);
-  const channels = [
-    { code: 'WECHAT', fee_rate: '0.60%', available: true },
-    { code: 'ALIPAY', fee_rate: '0.55%', available: true },
-  ];
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      <div style={{ minHeight: '100vh', background: '#f6f7fb' }}>
-        <HuiPayCheckout
-          orderNo={activeOrderNo}
-          channels={channels}
-          amount={amount}
-          discount={discount}
-          openId={openid}
-          defaultPayType={code ? (isWeixinBrowser() ? 'JSAPI' : 'H5') : 'NATIVE'}
-          onError={(e) => setPayError(e.message)}
-        />
+  // 码牌模式：已建单、正在等待微信支付结果
+  if (code && createdOrder) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#f6f7fb', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ padding: '30vh 24px', textAlign: 'center' }}>
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              margin: '0 auto 16px',
+              border: '3px solid rgba(17,107,85,0.2)',
+              borderTopColor: '#116b55',
+              borderRadius: '50%',
+              animation: 'hp-spin 0.8s linear infinite',
+            }}
+          />
+          <div style={{ fontSize: 16, color: '#1f2a24' }}>请在微信支付窗口中完成支付…</div>
+          <div style={{ fontSize: 13, color: '#5b6b62', marginTop: 8 }}>订单号 {activeOrderNo}</div>
+        </div>
       </div>
-    </QueryClientProvider>
-  );
+    );
+  }
+
+  // 常规订单支付（有 order 参数）
+  return <div style={{ minHeight: '100vh', background: '#f6f7fb' }} />;
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <QueryClientProvider client={queryClient}>
+    <AntApp>
+      <App />
+    </AntApp>
+  </QueryClientProvider>,
+);

@@ -10,12 +10,22 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const TraceIDKey = "trace_id"
 
+// FileLogConfig 日志文件输出配置（落盘 + 轮转）。
+type FileLogConfig struct {
+	Enabled   bool   // 是否写入文件
+	Path      string // 日志文件路径，如 logs/app.log
+	MaxSizeMB int    // 单个日志文件最大大小（MB），超过则轮转
+	MaxAgeDay int    // 保留天数
+}
+
 // NewZapLogger 构造结构化 JSON 日志器。
-func NewZapLogger(level string) *zap.Logger {
+// 默认输出到标准输出；配置了文件路径时，同时写文件（lumberjack 按大小/天数轮转）。
+func NewZapLogger(level string, file FileLogConfig) *zap.Logger {
 	lvl := zap.InfoLevel
 	_ = lvl.UnmarshalText([]byte(level))
 
@@ -24,11 +34,23 @@ func NewZapLogger(level string) *zap.Logger {
 	encCfg.EncodeTime = zapcore.ISO8601TimeEncoder
 	encCfg.EncodeLevel = zapcore.LowercaseLevelEncoder
 
-	core := zapcore.NewCore(
-		zapcore.NewJSONEncoder(encCfg),
-		zapcore.AddSync(os.Stdout),
-		lvl,
-	)
+	encoder := zapcore.NewJSONEncoder(encCfg)
+	// 始终输出到标准输出
+	cores := []zapcore.Core{
+		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), lvl),
+	}
+	// 追加文件输出（按大小/天数轮转）
+	if file.Enabled && file.Path != "" {
+		w := &lumberjack.Logger{
+			Filename: file.Path,
+			MaxSize:  file.MaxSizeMB,
+			MaxAge:   file.MaxAgeDay,
+			Compress: true,
+			LocalTime: true,
+		}
+		cores = append(cores, zapcore.NewCore(encoder, zapcore.AddSync(w), lvl))
+	}
+	core := zapcore.NewTee(cores...)
 	return zap.New(core, zap.AddCaller(), zap.AddStacktrace(zap.ErrorLevel))
 }
 

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -15,6 +17,22 @@ import (
 	"github.com/huipay/huipay-backend/internal/account/repository"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 )
+
+// journalIDSeq 流水 ID 生成用的全局递增序号（配合时间戳保证并发唯一）。
+var (
+	journalIDMu  sync.Mutex
+	journalIDSeq int64
+)
+
+// journalID 生成 20 位十进制雪花样式 ID，适配 t_journal_entry.id CHAR(20)。
+// 组成：Unix 毫秒时间戳（13 位）+ 全局递增序号（7 位），保证同毫秒内并发也不冲突。
+func journalID() string {
+	journalIDMu.Lock()
+	journalIDSeq++
+	seq := journalIDSeq
+	journalIDMu.Unlock()
+	return fmt.Sprintf("%013d%07d", time.Now().UnixMilli(), seq%10000000)
+}
 
 // EntryInput 单条流水输入。
 type EntryInput struct {
@@ -118,7 +136,7 @@ func (s *Service) Transfer(ctx context.Context, req *TransferRequest) error {
 // appendWithTx 在事务内追加流水。
 func (s *Service) appendWithTx(ctx context.Context, tx *gorm.DB, in *EntryInput) error {
 	m := &repository.JournalEntryModel{
-		ID:             uuid.NewString(),
+		ID:             journalID(),
 		WalletID:       in.WalletID,
 		Direction:      in.Direction,
 		Amount:         in.Amount,

@@ -13,7 +13,10 @@ type OrderModel struct {
 	OrderNo         string         `gorm:"column:order_no;size:32;uniqueIndex:uk_order_no;not null" json:"order_no"`
 	MerchantOrderNo string         `gorm:"column:merchant_order_no;size:64;not null" json:"merchant_order_no"`
 	MerchantID      uint64         `gorm:"column:merchant_id;not null" json:"merchant_id"`
+	StoreID         *uint64        `gorm:"column:store_id" json:"store_id"` // 关联门店 ID（可选）
 	CodeID          string         `gorm:"column:code_id;size:16" json:"code_id"` // 来源收款码牌短码
+	// 非持久字段：关联门店名称（列表查询 JOIN 填充）
+	StoreName       string         `gorm:"-" json:"store_name,omitempty"`
 	ParentOrderNo   string         `gorm:"column:parent_order_no;size:32" json:"parent_order_no"`
 	OrderType       string         `gorm:"column:order_type;size:32;not null;default:PAYMENT" json:"order_type"`
 	Amount          int64          `gorm:"column:amount;not null" json:"amount"`

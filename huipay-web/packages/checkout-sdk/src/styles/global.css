@@ -1,21 +1,303 @@
 /* 收银台全局样式 */
-.huipay-checkout {
-  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, sans-serif;
-  color: #0e1a2b;
-  background: #ffffff;
+
+/* ===== 设计基调：暖白纸感 + 墨绿金 ===== */
+:root {
+  --hp-bg: #f6f3ec;
+  --hp-bg-deep: #efece2;
+  --hp-ink: #1f2a24;
+  --hp-ink-soft: #5b6b62;
+  --hp-green: #116b55;
+  --hp-green-deep: #0c523f;
+  --hp-gold: #c9a35c;
+  --hp-gold-soft: #e6d3a8;
+  --hp-line: #e4ded0;
+  --hp-card: #fffdf8;
+  --hp-danger: #c0392b;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--hp-bg);
+}
+
+/* 金额输入页（码牌扫码收款） */
+.huipay-amount {
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: var(--hp-ink);
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(201, 163, 92, 0.16) 0%, rgba(201, 163, 92, 0) 55%),
+    radial-gradient(90% 40% at 10% 110%, rgba(17, 107, 85, 0.08) 0%, rgba(17, 107, 85, 0) 60%),
+    linear-gradient(180deg, var(--hp-bg) 0%, var(--hp-bg-deep) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24px 28px;
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 顶部商户标识 */
+.huipay-amount__brand {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 0 6px;
+}
+.huipay-amount__seal {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--hp-green), var(--hp-green-deep));
+  color: var(--hp-gold-soft);
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(17, 107, 85, 0.32);
+}
+.huipay-amount__brand-text {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--hp-ink);
+}
+
+/* 金额主视觉 */
+.huipay-amount__hero {
+  width: 100%;
+  margin-top: 26px;
+  text-align: center;
+  animation: hp-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.huipay-amount__label {
+  font-size: 14px;
+  color: var(--hp-ink-soft);
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.huipay-amount__label-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--hp-gold);
+}
+.huipay-amount__display {
+  margin-top: 18px;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 14px;
+}
+.huipay-amount__currency {
+  font-size: 40px;
+  font-weight: 300;
+  color: var(--hp-green);
+  line-height: 1;
+}
+.huipay-amount__input.ant-input-number {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  width: auto;
+  min-width: 0;
+}
+.huipay-amount__input .ant-input-number-input {
+  font-size: 64px;
+  font-weight: 700;
+  color: var(--hp-ink);
+  letter-spacing: -1px;
+  text-align: center;
+  height: auto;
+  line-height: 1.1;
+  padding: 0;
+  font-family: 'Baskerville', 'Didot', 'Bodoni 72', 'PingFang SC', serif;
+}
+.huipay-amount__input .ant-input-number-input::placeholder {
+  color: #c9cfc6;
+  font-weight: 300;
+}
+.huipay-amount__underline {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--hp-gold), var(--hp-green));
+  border-radius: 2px;
+  transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.huipay-amount__display:focus-within .huipay-amount__underline,
+.huipay-amount__input.ant-input-number:focus-within ~ .huipay-amount__underline {
+  width: 72%;
+}
+.huipay-amount__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--hp-ink-soft);
+  opacity: 0.85;
+}
+
+/* 快捷金额 */
+.huipay-amount__quick {
+  width: 100%;
+  margin-top: 30px;
+  animation: hp-rise 0.6s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.huipay-amount__quick-title {
+  font-size: 12px;
+  color: var(--hp-ink-soft);
+  letter-spacing: 1px;
+  margin: 0 0 12px;
+}
+.huipay-amount__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.huipay-amount__chip {
+  flex: 1 1 0;
+  min-width: 72px;
+  padding: 12px 0;
+  border: 1px solid var(--hp-line);
   border-radius: 12px;
-  box-shadow: 0 6px 24px rgba(14, 26, 43, 0.06);
+  background: var(--hp-card);
+  color: var(--hp-ink);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.huipay-amount__chip:hover {
+  border-color: var(--hp-gold);
+  transform: translateY(-1px);
+}
+.huipay-amount__chip--active {
+  border-color: var(--hp-green);
+  background: linear-gradient(135deg, var(--hp-green), var(--hp-green-deep));
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(17, 107, 85, 0.28);
+}
+
+/* 确认按钮 */
+.huipay-amount__action {
+  width: 100%;
+  margin-top: 30px;
+  animation: hp-rise 0.6s 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.huipay-amount__submit {
+  width: 100%;
+  padding: 16px 0;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--hp-green), var(--hp-green-deep));
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 10px 24px rgba(17, 107, 85, 0.32);
+  transition: all 0.2s ease;
+}
+.huipay-amount__submit:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(17, 107, 85, 0.4);
+}
+.huipay-amount__submit:active:not(:disabled) {
+  transform: translateY(0);
+}
+.huipay-amount__submit:disabled {
+  background: #c9d0c8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.huipay-amount__submit-arrow {
+  font-size: 20px;
+  transition: transform 0.2s ease;
+}
+.huipay-amount__submit:hover:not(:disabled) .huipay-amount__submit-arrow {
+  transform: translateX(4px);
+}
+.huipay-amount__spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: hp-spin 0.8s linear infinite;
+}
+.huipay-amount__error {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--hp-danger);
+}
+
+/* 信任背书 */
+.huipay-amount__trust {
+  margin-top: auto;
+  padding-top: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--hp-ink-soft);
+  opacity: 0.8;
+}
+.huipay-amount__trust-sep {
+  opacity: 0.5;
+}
+
+/* 动画 */
+@keyframes hp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes hp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 兼容 antd 组件底部的收银台（Checkout 形态） */
+.huipay-checkout {
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: var(--hp-ink);
+  background: var(--hp-card);
+  border-radius: 16px;
+  box-shadow: 0 10px 32px rgba(31, 42, 36, 0.08);
+  border: 1px solid var(--hp-line);
 }
 
 .huipay-checkout .ant-radio-wrapper {
   display: flex;
   align-items: center;
   padding: 12px;
-  border: 1px solid #e3e8f1;
-  border-radius: 8px;
+  border: 1px solid var(--hp-line);
+  border-radius: 10px;
 }
 
 .huipay-checkout .ant-radio-wrapper-checked {
-  border-color: #1e6fff;
-  background: rgba(30, 111, 255, 0.05);
+  border-color: var(--hp-green);
+  background: rgba(17, 107, 85, 0.05);
 }

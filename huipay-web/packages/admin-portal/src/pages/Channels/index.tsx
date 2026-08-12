@@ -57,11 +57,11 @@ export const Channels: React.FC = () => {
       onFilter: (v, r) => r.status === v,
       render: (v: ChannelRow['status']) =>
         v === 'NORMAL' ? (
-          <Tag color="green">正常</Tag>
+          <Tag color="success" style={{ borderRadius: 10 }}>正常</Tag>
         ) : v === 'MAINTENANCE' ? (
-          <Tag color="orange">维护中</Tag>
+          <Tag color="warning" style={{ borderRadius: 10 }}>维护中</Tag>
         ) : (
-          <Tag color="red">下线</Tag>
+          <Tag color="error" style={{ borderRadius: 10 }}>下线</Tag>
         ),
     },
     {
@@ -88,11 +88,18 @@ export const Channels: React.FC = () => {
   ];
 
   return (
-    <Card title="支付通道配置">
+    <Card
+      title={
+        <Space>
+          <span>支付通道配置</span>
+          <Tag style={{ borderRadius: 10 }} color="blue">{filtered.length}</Tag>
+        </Space>
+      }
+    >
       <Space style={{ marginBottom: 16 }} wrap>
         <Input
           allowClear
-          prefix={<SearchOutlined />}
+          prefix={<SearchOutlined style={{ color: 'rgba(0,0,0,0.35)' }} />}
           placeholder="搜索通道名称 / 编码"
           style={{ width: 240 }}
           value={keyword}

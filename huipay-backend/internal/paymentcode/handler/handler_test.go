@@ -38,7 +38,7 @@ func newRouter(t *testing.T) *gin.Engine {
 	if err := db.AutoMigrate(&repository.PaymentCodeModel{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	svc := service.NewService(repository.NewPaymentCodeRepo(db), zap.NewNop())
+	svc := service.NewService(repository.NewPaymentCodeRepo(db), zap.NewNop(), "http://localhost:5173")
 	h := New(svc, zap.NewNop())
 
 	r := gin.New()

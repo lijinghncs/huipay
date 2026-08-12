@@ -8,6 +8,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { createApi } from '@huipay/shared/api-client';
 import { App } from './App';
 import { getToken, merchantIdFromToken } from './services/auth';
+import './styles/global.css';
 
 // 初始化 API 客户端
 createApi({
@@ -26,7 +27,42 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#1e6fff' } }}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          colorPrimary: '#1e6fff',
+          colorInfo: '#1e6fff',
+          colorBgLayout: '#f4f6fb',
+          colorText: '#1f2a44',
+          colorTextSecondary: '#66718b',
+          borderRadius: 8,
+          fontFamily: `'PingFang SC','Microsoft YaHei',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif`,
+        },
+        components: {
+          Layout: {
+            headerBg: '#0e1a2b',
+            headerHeight: 56,
+          },
+          Menu: {
+            darkItemBg: '#0e1a2b',
+            darkSubMenuItemBg: '#0e1a2b',
+            darkItemSelectedBg: '#1e6fff',
+            darkItemColor: 'rgba(255,255,255,0.72)',
+            darkItemHoverColor: '#ffffff',
+          },
+          Card: {
+            headerBg: 'transparent',
+            headerFontSize: 15,
+          },
+          Table: {
+            headerBg: '#f7f9fc',
+            headerColor: '#66718b',
+            rowHoverBg: '#f5f8ff',
+          },
+        },
+      }}
+    >
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <BrowserRouter>

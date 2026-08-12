@@ -1,5 +1,5 @@
 // 商家用户/交易服务（真实调后端 API）
-import { get } from '@huipay/shared/api-client';
+import { get, post, put, del } from '@huipay/shared/api-client';
 import type { Order, Wallet, JournalEntry, QueryResult } from '@huipay/shared';
 import { merchantIdFromToken } from './auth';
 
@@ -19,6 +19,7 @@ export async function listOrders(params: {
   status?: string;
   code_id?: string;
   channel?: string;
+  store_id?: number;
   start?: string;
   end?: string;
 } = {}): Promise<{
@@ -98,6 +99,8 @@ export async function getMerchantOverview(): Promise<MerchantOverview> {
 export interface PaymentCode {
   id: number;
   merchant_id: number;
+  store_id?: number;
+  store_name?: string;
   code_id: string;
   status: number; // 1=启用 0=停用
   remark?: string;
@@ -107,7 +110,7 @@ export interface PaymentCode {
 }
 
 /** 分页码牌列表。 */
-export async function listCodes(params: { page?: number; size?: number; status?: number } = {}): Promise<{
+export async function listCodes(params: { page?: number; size?: number; status?: number; store_id?: number } = {}): Promise<{
   items: PaymentCode[];
   total: number;
   page: number;
@@ -117,11 +120,88 @@ export async function listCodes(params: { page?: number; size?: number; status?:
 }
 
 /** 创建收款码牌。 */
-export async function createCode(remark: string): Promise<PaymentCode> {
-  return post<PaymentCode>('/v1/merchant/codes', { remark });
+export async function createCode(remark: string, storeId?: number): Promise<PaymentCode> {
+  return post<PaymentCode>('/v1/merchant/codes', { remark, store_id: storeId ?? 0 });
 }
 
 /** 停用收款码牌。 */
 export async function disableCode(id: number): Promise<{ id: number; status: number }> {
   return post<{ id: number; status: number }>(`/v1/merchant/codes/${id}/disable`);
+}
+
+/** 绑定/解绑收款码牌门店（storeId 为 0 表示解绑）。 */
+export async function setCodeStore(id: number, storeId?: number): Promise<PaymentCode> {
+  return post<PaymentCode>(`/v1/merchant/codes/${id}/store`, { store_id: storeId ?? 0 });
+}
+
+/** 门店。 */
+export interface Store {
+  id: number;
+  store_code: string;
+  merchant_id: number;
+  name: string;
+  store_type?: string;
+  contact_phone?: string;
+  region?: string;
+  address?: string;
+  longitude?: number | null;
+  latitude?: number | null;
+  status: number; // 1=启用 0=停用
+  code_count: number;
+  order_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 门店详情（含关联码牌数/订单数）。 */
+export interface StoreDetail extends Store {
+  code_count: number;
+  order_count: number;
+}
+
+/** 门店统计（列表 KPI）。 */
+export interface StoreStats {
+  total: number;
+  active: number;
+  month_new: number;
+}
+
+/** 门店列表（分页 + 名称/状态筛选）。 */
+export async function listStores(params: { page?: number; size?: number; keyword?: string; status?: number } = {}): Promise<{
+  items: Store[];
+  total: number;
+  page: number;
+  size: number;
+}> {
+  return get<{ items: Store[]; total: number; page: number; size: number }>('/v1/merchant/stores', { params });
+}
+
+/** 门店统计。 */
+export async function getStoreStats(): Promise<StoreStats> {
+  return get<StoreStats>('/v1/merchant/stores/stats');
+}
+
+/** 门店详情。 */
+export async function getStore(id: number): Promise<StoreDetail> {
+  return get<StoreDetail>(`/v1/merchant/stores/${id}`);
+}
+
+/** 创建门店。 */
+export async function createStore(data: Partial<Store>): Promise<Store> {
+  return post<Store>('/v1/merchant/stores', data);
+}
+
+/** 更新门店。 */
+export async function updateStore(id: number, data: Partial<Store>): Promise<Store> {
+  return put<Store>(`/v1/merchant/stores/${id}`, data);
+}
+
+/** 启停门店。 */
+export async function setStoreStatus(id: number, status: number): Promise<Store> {
+  return post<Store>(`/v1/merchant/stores/${id}/status`, { status });
+}
+
+/** 删除门店。 */
+export async function deleteStore(id: number): Promise<{ id: number; deleted: boolean }> {
+  return del<{ id: number; deleted: boolean }>(`/v1/merchant/stores/${id}`);
 }

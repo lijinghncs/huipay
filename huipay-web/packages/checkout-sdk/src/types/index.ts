@@ -50,6 +50,8 @@ export interface CheckoutProps {
   defaultPayType?: PayType;
   /** 是否显示场景切换（默认 true） */
   showPayTypeSelector?: boolean;
+  /** 是否显示支付方式（通道）切换（默认 true） */
+  showChannelSelector?: boolean;
   /** 用户选中的支付通道变化 */
   onChannelChange?: (code: string) => void;
   /** 用户选中的支付场景变化 */

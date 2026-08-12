@@ -97,6 +97,9 @@ func GinErrorHandler(logger *zap.Logger) gin.HandlerFunc {
 			Fail(c, logger, be)
 			return
 		}
+		if logger != nil {
+			logger.Error("unhandled_error", zap.Error(last))
+		}
 		Fail(c, logger, New(CodeInternalError, "internal error", http.StatusInternalServerError))
 	}
 }

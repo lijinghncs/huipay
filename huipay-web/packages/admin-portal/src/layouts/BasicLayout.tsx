@@ -49,6 +49,7 @@ const { useBreakpoint } = Grid;
 
 const MenuPanel = ({ selectedKey, onSelect }: { selectedKey: string; onSelect: (key: string) => void }) => (
   <Menu
+    className="hp-sider"
     mode="inline"
     theme="dark"
     selectedKeys={[selectedKey]}
@@ -88,21 +89,25 @@ export const BasicLayout: React.FC = () => {
         <Space size={12} style={{ alignItems: 'center' }}>
           <span
             style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
+              width: 30,
+              height: 30,
+              borderRadius: 9,
               background: 'linear-gradient(135deg,#1e6fff,#06b6a4)',
+              boxShadow: '0 2px 8px rgba(30,111,255,0.45)',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontWeight: 800,
-              fontSize: 15,
+              fontSize: 16,
               color: '#fff',
             }}
           >
             汇
           </span>
-          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0.5 }}>汇聚付 · 管理后台</span>
+          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0.5 }}>
+            汇聚付
+            <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: 'rgba(255,255,255,0.55)' }}>管理后台</span>
+          </span>
         </Space>
         <Dropdown
           menu={{
@@ -131,9 +136,14 @@ export const BasicLayout: React.FC = () => {
             style={{
               background: '#0e1a33',
               boxShadow: '1px 0 0 rgba(16,24,40,0.06)',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <MenuPanel selectedKey={menuKey} onSelect={(k) => nav(k)} />
+            <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+              <MenuPanel selectedKey={menuKey} onSelect={(k) => nav(k)} />
+            </div>
+            {!collapsed && <div className="hp-sider-footer">汇聚付 v1.0.0</div>}
           </Sider>
         )}
 

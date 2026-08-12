@@ -63,18 +63,7 @@ export const Wallets: React.FC = () => {
   });
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card>
-        <Space>
-          <span>主体 ID：</span>
-          <Input
-            value={entityId ?? ''}
-            onChange={(e) => setEntityId(Number(e.target.value) || null)}
-            placeholder="输入 entity_id"
-            style={{ width: 200 }}
-          />
-        </Space>
-      </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title="钱包余额" loading={walletQuery.isLoading}>
         <Money cents={walletQuery.data?.balance ?? 0} />
       </Card>
@@ -119,6 +108,7 @@ export const Wallets: React.FC = () => {
           </Button>
         </Space>
         <Table<JournalEntry>
+          className="hp-zebra"
           rowKey="id"
           columns={entryColumns}
           dataSource={entriesQuery.data?.items ?? []}
@@ -135,6 +125,6 @@ export const Wallets: React.FC = () => {
           }}
         />
       </Card>
-    </Space>
+    </div>
   );
 };

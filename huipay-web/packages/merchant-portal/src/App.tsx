@@ -7,6 +7,8 @@ import { Transactions } from './pages/Transactions';
 import { Codes } from './pages/Codes';
 import { Wallets } from './pages/Wallets';
 import { SplitRules } from './pages/SplitRules';
+import { Stores } from './pages/Stores';
+import { StoreDetail } from './pages/Stores/detail';
 import { Login } from './pages/Login';
 import { RequireAuth } from './components/RequireAuth';
 
@@ -26,6 +28,8 @@ export const App: React.FC = () => {
         <Route path="/codes" element={<Codes />} />
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/split-rules" element={<SplitRules />} />
+        <Route path="/stores" element={<Stores />} />
+        <Route path="/stores/:id" element={<StoreDetail />} />
       </Route>
     </Routes>
   );

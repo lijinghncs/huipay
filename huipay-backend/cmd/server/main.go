@@ -43,25 +43,42 @@ import (
 	paymentcodeservice "github.com/huipay/huipay-backend/internal/paymentcode/service"
 	paymentcodehandler "github.com/huipay/huipay-backend/internal/paymentcode/handler"
 
+	storerepo "github.com/huipay/huipay-backend/internal/store/repository"
+	storeservice "github.com/huipay/huipay-backend/internal/store/service"
+	storehandler "github.com/huipay/huipay-backend/internal/store/handler"
+
 	notifyhandler "github.com/huipay/huipay-backend/internal/payment/notify"
 	paymentrouter "github.com/huipay/huipay-backend/internal/payment/router"
 	"github.com/huipay/huipay-backend/internal/payment/channel/wechat"
+	mockchannel "github.com/huipay/huipay-backend/internal/payment/channel/mock"
 	reconcilesvc "github.com/huipay/huipay-backend/internal/payment/reconcile"
 	reconcilesched "github.com/huipay/huipay-backend/internal/payment/reconcile/scheduler"
 	"github.com/huipay/huipay-backend/internal/middleware"
+	"github.com/huipay/huipay-backend/internal/domain/vo"
 
 	splithandler "github.com/huipay/huipay-backend/internal/split/handler"
 	splitservice "github.com/huipay/huipay-backend/internal/split/service"
 	splitrule "github.com/huipay/huipay-backend/internal/split/rule"
 	splitexec "github.com/huipay/huipay-backend/internal/split/executor"
+	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
 )
+
+// toObsFileLog 将配置的日志文件配置转换为 obs 日志文件配置。
+func toObsFileLog(c config.LogFileConfig) obs.FileLogConfig {
+	return obs.FileLogConfig{
+		Enabled:   c.Enabled,
+		Path:      c.Path,
+		MaxSizeMB: c.MaxSizeMB,
+		MaxAgeDay: c.MaxAgeDay,
+	}
+}
 
 func main() {
 	// 1. 加载配置
 	cfg := config.Load()
 
 	// 2. 初始化日志
-	logger := obs.NewZapLogger(cfg.LogLevel)
+	logger := obs.NewZapLogger(cfg.LogLevel, toObsFileLog(cfg.LogFile))
 
 	// 3. 初始化 MySQL 主从（HUIPAY_SKIP_DB=true 时跳过，便于本地冒烟）
 	dbConn, err := db.MustOpen(cfg, nil)
@@ -92,6 +109,7 @@ func main() {
 
 	paymentRouter := paymentrouter.NewDefaultRouter()
 	paymentCodeRepo := paymentcoderepo.NewPaymentCodeRepo(dbConn.Master)
+	storeRepo := storerepo.NewStoreRepo(dbConn.Master)
 
 	// 商户进件服务（依赖实体仓储 + 账户服务；也是商户微信配置 provider，需在微信管理器前装配）
 	entityRepo := merchantrepo.NewEntityRepo(dbConn.Master)
@@ -111,13 +129,69 @@ func main() {
 		paymentRouter.Register(wxAdapter)
 	}
 
+	// 挡板通道：本地未启用微信支付时，注册 mock 适配器模拟支付成功，便于联调。
+	// 仅当微信通道未启用且 app_env 非 production 时生效。
+	var (
+		orderSvc          *orderservice.Service // 提前声明，供 mock 回调闭包引用，稍后赋值
+		settlementWalletID uint64               // 通道在途资金户 wallet_id，供 mock 回调入账
+	)
+	if wxAdapter == nil && cfg.AppEnv != "production" {
+		mockAdapter := mockchannel.New(func(ctx context.Context, orderNo string, amount int64) error {
+			// 模拟微信回调成功：标记订单已支付（幂等安全）
+			updated, err := orderSvc.MarkPaid(ctx, orderNo, amount, vo.ChannelWeChat, "mock_trade_"+orderNo)
+			if err != nil {
+				return err
+			}
+			if !updated {
+				return nil
+			}
+			order, gErr := orderSvc.GetByOrderNo(ctx, orderNo)
+			if gErr != nil || order == nil {
+				return gErr
+			}
+			// 挡板：先给结算户预充高额资金（模拟渠道垫资），再完成 结算户→商户 入账，保证借贷平衡
+			settle, wErr := walletRepo.GetByID(ctx, settlementWalletID)
+			if wErr != nil {
+				logger.Error("mock credit: get settlement wallet fail", zap.Uint64("settlement_wallet_id", settlementWalletID), zap.Error(wErr))
+				return wErr
+			}
+			logger.Info("mock credit: settlement balance before", zap.Uint64("wallet_id", settle.ID), zap.Int64("balance", settle.Balance), zap.Int64("need", amount))
+			if settle.Balance < amount {
+				if uErr := walletRepo.UpdateBalance(ctx, settle.ID, settle.Version, amount); uErr != nil {
+					logger.Error("mock credit: topup settlement fail", zap.Error(uErr))
+					return uErr
+				}
+			}
+			if cErr := ledgerSvc.CreditFromSettlement(ctx, &ledger.CreditFromSettlementRequest{
+				SettlementWalletID: settlementWalletID,
+				ToEntityID:         order.MerchantID,
+				ToEntityType:       vo.EntityMerchant,
+				Amount:             amount,
+				BizType:            "PAYMENT",
+				BizID:              orderNo,
+			}); cErr != nil {
+				logger.Error("mock credit: credit from settlement fail", zap.Error(cErr))
+				return cErr
+			}
+			logger.Info("mock credit: success", zap.String("order_no", orderNo), zap.Int64("amount", amount))
+			return nil
+		})
+		paymentRouter.Register(mockAdapter)
+		logger.Warn("mock payment channel enabled (wechat disabled)")
+	}
+
 	// 按商户微信配置的适配器管理器：商户已配置则用商户参数下单/查单/回调，否则回退平台通道
 	var wxManager *wechat.Manager
 	if wxAdapter != nil {
 		wxManager = wechat.NewManager(wxAdapter, merchantSvc, logger)
 	}
 
-	orderSvc := orderservice.NewService(dbConn.Master, logger, paymentRouter, paymentCodeRepo, wxManager)
+	// 微信未启用时 wxManager 为 nil：显式传 nil 接口，避免 Go 的 nil 指针放入接口导致 merchantAdapters != nil
+	var merchantAdapters orderservice.MerchantAdapterResolver
+	if wxManager != nil {
+		merchantAdapters = wxManager
+	}
+	orderSvc = orderservice.NewService(dbConn.Master, logger, paymentRouter, paymentCodeRepo, merchantAdapters)
 
 	// 对账下载器（微信通道启用且配置完整时初始化；失败仅告警）
 	var billDownloader *reconcilesvc.Downloader
@@ -133,7 +207,6 @@ func main() {
 	idemStore := idem.NewMySQLStore(dbConn.Master)
 
 	// 启动时初始化通道在途资金户（entity + wallet），返回微信结算户 wallet_id 供回调入账
-	settlementWalletID := uint64(0)
 	if dbConn.Master != nil {
 		wid, seedErr := bootstrap.SeedChannelSettlementWallets(context.Background(), dbConn.Master, accountSvc, logger)
 		if seedErr != nil {
@@ -145,10 +218,14 @@ func main() {
 
 	ruleEngine := splitrule.NewEngine()
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, logger)
-	splitSvc := splitservice.NewService(ruleEngine, splitExec, accountSvc, logger)
+	splitRuleRepo := splitrepo.NewSplitRuleRepo(dbConn.Master)
+	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, accountSvc, logger)
+
+	// 门店服务
+	storeSvc := storeservice.NewService(storeRepo, logger)
 
 	// 收款码牌服务
-	paymentCodeSvc := paymentcodeservice.NewService(paymentCodeRepo, logger)
+	paymentCodeSvc := paymentcodeservice.NewService(paymentCodeRepo, storeRepo, logger, cfg.CheckoutBaseURL)
 
 	// 6. 装配 Gin
 	gin.SetMode(cfg.GinMode)
@@ -166,6 +243,7 @@ func main() {
 	splitH := splithandler.New(splitSvc, logger)
 	merchantH := merchanthandler.New(merchantSvc, logger)
 	paymentCodeH := paymentcodehandler.New(paymentCodeSvc, logger)
+	storeH := storehandler.New(storeSvc, logger)
 	notifyH := notifyhandler.New(wxAdapter, wxManager, orderSvc, accountSvc, ledgerSvc, idemStore, settlementWalletID, logger)
 
 	// 微信 OAuth（公众号网页授权，用于 JSAPI 场景获取 openid）
@@ -218,6 +296,16 @@ func main() {
 		v1.POST("/merchant/codes", paymentCodeH.Create)
 		v1.GET("/merchant/codes", paymentCodeH.List)
 		v1.POST("/merchant/codes/:id/disable", paymentCodeH.Disable)
+		v1.POST("/merchant/codes/:id/store", paymentCodeH.SetStore)
+
+		// 门店：商户侧自助管理
+		v1.POST("/merchant/stores", storeH.Create)
+		v1.GET("/merchant/stores", storeH.List)
+		v1.GET("/merchant/stores/stats", storeH.Stats)
+		v1.GET("/merchant/stores/:id", storeH.Get)
+		v1.PUT("/merchant/stores/:id", storeH.Update)
+		v1.POST("/merchant/stores/:id/status", storeH.SetStatus)
+		v1.DELETE("/merchant/stores/:id", storeH.Delete)
 
 		// 商户自助：当前商户资料与经营概览（读 X-Merchant-Id 中间件）
 		v1.GET("/merchant/profile", merchantH.SelfProfile)

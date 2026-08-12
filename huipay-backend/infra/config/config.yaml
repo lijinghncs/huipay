@@ -5,6 +5,19 @@ log_level: debug
 app_name: huipay-backend
 app_env: local
 
+# 日志文件输出（落盘 + 轮转）。enabled=false 时仅输出到标准输出。
+log_file:
+  enabled: true
+  path: "logs/app.log"
+  max_size_mb: 50
+  max_age_day: 7
+
+# 商户登录 token 签名密钥（HUIPAY_AUTH_SECRET 可覆盖；生产环境必须通过环境变量注入强密钥）
+auth_secret: "dev-local-auth-secret-change-me"
+
+# 收银台 H5 地址前缀，付款码二维码 checkout_url 据此生成（生产应为 https://checkout.huipay.cn）
+checkout_base_url: "http://localhost:5173"
+
 # MySQL 主从 DSN（HUIPAY_MYSQL_MASTER / HUIPAY_MYSQL_SLAVE 可通过环境变量覆盖）
 mysql_master: "root:lijing123!@#@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local"
 mysql_slave: ""

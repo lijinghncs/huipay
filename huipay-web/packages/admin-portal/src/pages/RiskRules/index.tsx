@@ -56,7 +56,11 @@ export const RiskRules: React.FC = () => {
         { text: '放行', value: 'PASS' },
       ],
       onFilter: (v, r) => r.decision === v,
-      render: (v: string) => <Tag color={decisionColor[v] ?? 'default'}>{decisionLabel[v] ?? v}</Tag>,
+      render: (v: string) => (
+        <Tag color={decisionColor[v] ?? 'default'} style={{ borderRadius: 10 }}>
+          {decisionLabel[v] ?? v}
+        </Tag>
+      ),
     },
     { title: '优先级', dataIndex: 'priority', key: 'priority', sorter: (a, b) => a.priority - b.priority },
     {
@@ -64,13 +68,18 @@ export const RiskRules: React.FC = () => {
       dataIndex: 'enabled',
       key: 'enabled',
       render: (v: boolean) =>
-        v ? <Tag color="green">是</Tag> : <Tag>否</Tag>,
+        v ? <Tag color="success" style={{ borderRadius: 10 }}>是</Tag> : <Tag style={{ borderRadius: 10 }}>否</Tag>,
     },
   ];
 
   return (
     <Card
-      title="风控规则"
+      title={
+        <Space>
+          <span>风控规则</span>
+          <Tag style={{ borderRadius: 10 }} color="blue">{filtered.length}</Tag>
+        </Space>
+      }
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
           新建规则
@@ -80,7 +89,7 @@ export const RiskRules: React.FC = () => {
       <Space style={{ marginBottom: 16 }} wrap>
         <Input
           allowClear
-          prefix={<SearchOutlined />}
+          prefix={<SearchOutlined style={{ color: 'rgba(0,0,0,0.35)' }} />}
           placeholder="搜索规则名 / 类型"
           style={{ width: 220 }}
           value={keyword}
@@ -123,7 +132,7 @@ export const RiskRules: React.FC = () => {
             form.resetFields();
           });
         }}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item name="name" label="规则名" rules={[{ required: true, message: '请输入规则名' }]}>

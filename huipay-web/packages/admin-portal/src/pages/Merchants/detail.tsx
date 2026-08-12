@@ -1,62 +1,43 @@
-// 商户详情子页：经营概览 + 基本信息 + 商户身份认证资料 + 微信支付配置（渐变页头 + KPI 卡片布局）
+// 商户详情子页：品牌渐变页头 + 经营概览 KPI + 分栏信息卡（复用全局 hp-* 设计语言）
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Card, Descriptions, Skeleton, Result, Button, Space, Row, Col, Statistic, Alert, Tag, Avatar, Divider } from 'antd';
+import { Card, Skeleton, Result, Button, Space, Row, Col, Alert, Tag } from 'antd';
 import {
   ArrowLeftOutlined,
   SettingOutlined,
+  ShopOutlined,
+  IdcardOutlined,
+  ApartmentOutlined,
   WalletOutlined,
-  AccountBookOutlined,
-  CheckCircleOutlined,
-  ShoppingCartOutlined,
+  UserOutlined,
+  CreditCardOutlined,
+  BankOutlined,
+  PhoneOutlined,
+  SafetyCertificateOutlined,
+  GlobalOutlined,
+  KeyOutlined,
+  FileProtectOutlined,
+  OrderedListOutlined,
   QrcodeOutlined,
   LockOutlined,
-  EnvironmentOutlined,
-  UserOutlined,
-  PhoneOutlined,
-  BankOutlined,
-  IdcardOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import { getMerchant, getMerchantOverview } from '../../services/admin';
 import { typeText, MerchantStatusTag, WechatEnabledTag, ConfiguredTag, Mono } from './shared';
+import { KpiCard } from '../../components/KpiCard';
 
-/** 页头信息项（深色渐变背景上的亮色小字） */
-const HeadInfo: React.FC<{ label: string; children?: React.ReactNode }> = ({ label, children }) => (
-  <div>
-    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
-    <div style={{ fontSize: 14, color: '#fff', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>{children}</div>
-  </div>
-);
-
-/** 经营概览 KPI 卡片（渐变图标） */
-const kpiCards = (ov: {
-  balance?: number;
-  total_paid?: number;
-  paid_order_count?: number;
-  order_count?: number;
-  active_code_count?: number;
-  frozen?: number;
-}) => [
-  { title: '钱包余额', value: ov?.balance ?? 0, money: true, icon: <WalletOutlined />, color: '#1e6fff' },
-  { title: '累计实付', value: ov?.total_paid ?? 0, money: true, icon: <AccountBookOutlined />, color: '#06b6a4' },
-  { title: '已支付订单', value: ov?.paid_order_count ?? 0, money: false, icon: <CheckCircleOutlined />, color: '#22c55e' },
-  { title: '订单总数', value: ov?.order_count ?? 0, money: false, icon: <ShoppingCartOutlined />, color: '#f59e0b' },
-  { title: '可用码牌', value: ov?.active_code_count ?? 0, money: false, icon: <QrcodeOutlined />, color: '#8b5cf6' },
-  { title: '冻结金额', value: ov?.frozen ?? 0, money: true, icon: <LockOutlined />, color: '#f5222d' },
-];
-
-/** 信息区字段：为缺失值提供友好占位 */
-const fmt = (v?: string | number | null) => (v === undefined || v === null || v === '' ? '—' : String(v));
-
-/** 信息区小图标字段行 */
-const InfoField: React.FC<{ icon: React.ReactNode; label: string; value?: React.ReactNode }> = ({ icon, label, value }) => (
+// 信息区单行：图标 + 标签 + 值
+const InfoRow: React.FC<{ icon: React.ReactNode; label: string; children?: React.ReactNode }> = ({
+  icon,
+  label,
+  children,
+}) => (
   <div className="hp-info-field">
     <span className="hp-info-icon">{icon}</span>
-    <div className="hp-info-body">
+    <div>
       <div className="hp-info-label">{label}</div>
-      <div className="hp-info-value">{value ?? '—'}</div>
+      <div className="hp-info-value">{children ?? '-'}</div>
     </div>
   </div>
 );
@@ -98,128 +79,97 @@ export const MerchantDetailPage: React.FC = () => {
   const d = detailQuery.data;
   const ov = overviewQuery.data;
   const wc = d.wechat_config;
-  const kyc = d.kyc_data;
+
+  type KpiItem = { title: string; value: number; formatter?: (v: number) => string; icon: React.ReactNode; color: string };
+  const kpis: KpiItem[] = [
+    { title: '钱包余额', value: ov?.balance ?? 0, formatter: (v: number) => formatCents(v), icon: <WalletOutlined />, color: '#1e6fff' },
+    { title: '累计实付', value: ov?.total_paid ?? 0, formatter: (v: number) => formatCents(v), icon: <CreditCardOutlined />, color: '#06b6a4' },
+    { title: '已支付订单', value: ov?.paid_order_count ?? 0, icon: <SafetyCertificateOutlined />, color: '#f59e0b' },
+    { title: '订单总数', value: ov?.order_count ?? 0, icon: <OrderedListOutlined />, color: '#8b5cf6' },
+    { title: '可用码牌', value: ov?.active_code_count ?? 0, icon: <QrcodeOutlined />, color: '#ec4899' },
+    { title: '冻结金额', value: ov?.frozen ?? 0, formatter: (v: number) => formatCents(v), icon: <LockOutlined />, color: '#64748b' },
+  ];
 
   return (
-    <Space direction="vertical" size={16} style={{ display: 'flex' }} className="hp-page">
-      {/* 页头：品牌渐变 + 商户徽标 */}
-      <Card
-        className="hp-detail-hero"
-        bodyStyle={{ padding: '22px 24px' }}
-      >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 品牌渐变页头 */}
+      <Card className="hp-detail-hero">
         <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }} align="center" wrap>
-          <Space size={14} align="center">
-            <Button
-              shape="circle"
-              type="text"
-              icon={<ArrowLeftOutlined style={{ color: '#fff' }} />}
-              onClick={() => nav('/merchants')}
-            />
-            <Avatar
-              size={48}
-              shape="square"
-              style={{
-                borderRadius: 12,
-                background: 'linear-gradient(135deg, #1e6fff 0%, #06b6a4 100%)',
-                color: '#fff',
-                fontWeight: 700,
-                fontSize: 20,
-                boxShadow: '0 6px 14px rgba(30,111,255,0.35)',
-              }}
-            >
-              {d.name?.slice(0, 1) || '商'}
-            </Avatar>
-            <div>
-              <Space size={10} align="center">
-                <span style={{ fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: 0.5 }}>{d.name}</span>
-                <Tag style={{ borderRadius: 10, color: '#fff', background: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.35)' }}>
-                  {typeText(d.entity_type)}
-                </Tag>
-                <MerchantStatusTag status={d.status} />
-              </Space>
-              <div style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
-                <Mono>{d.entity_code ?? '-'}</Mono>
-              </div>
-            </div>
+          <Space size={12} align="center" wrap>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => nav('/merchants')} style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }}>
+              返回
+            </Button>
+            <Space size={10} align="baseline" wrap>
+              <span style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>{d.name}</span>
+              <Tag style={{ borderRadius: 10, border: '1px solid rgba(255,255,255,0.25)', color: '#fff', background: 'rgba(255,255,255,0.12)' }}>
+                {typeText(d.entity_type)}
+              </Tag>
+              {d.status === 1 ? (
+                <Tag color="success" style={{ borderRadius: 10 }}>启用</Tag>
+              ) : (
+                <Tag color="error" style={{ borderRadius: 10 }}>停用</Tag>
+              )}
+            </Space>
           </Space>
-          <Button
-            type="primary"
-            icon={<SettingOutlined />}
-            style={{ background: 'rgba(255,255,255,0.16)', borderColor: 'rgba(255,255,255,0.5)', boxShadow: 'none', color: '#fff' }}
-            onClick={() => nav(`/merchants/${d.id}/wechat-config`)}
-          >
+          <Button type="primary" icon={<SettingOutlined />} onClick={() => nav(`/merchants/${d.id}/wechat-config`)}>
             微信支付配置
           </Button>
         </Space>
-        <Divider style={{ margin: '18px 0 16px', borderColor: 'rgba(255,255,255,0.12)' }} />
-        <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
-          <HeadInfo label="钱包号">{d.wallet_no ?? '-'}</HeadInfo>
-          <HeadInfo label="创建时间">{d.created_at ? formatDateTime(d.created_at) : '-'}</HeadInfo>
-          <HeadInfo label="最近更新">{d.updated_at ? formatDateTime(d.updated_at) : '-'}</HeadInfo>
-        </div>
+        <Row gutter={[24, 8]} style={{ marginTop: 20 }}>
+          <Col xs={12} md={6}>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>商户号</div>
+            <div style={{ color: '#fff', fontFamily: 'monospace', fontWeight: 600, marginTop: 4 }}>{d.entity_code}</div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>钱包号</div>
+            <div style={{ color: '#fff', fontFamily: 'monospace', fontWeight: 600, marginTop: 4 }}>{d.wallet_no ?? '-'}</div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>创建时间</div>
+            <div style={{ color: '#fff', marginTop: 4 }}>{d.created_at ? formatDateTime(d.created_at) : '-'}</div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>最近更新</div>
+            <div style={{ color: '#fff', marginTop: 4 }}>{d.updated_at ? formatDateTime(d.updated_at) : '-'}</div>
+          </Col>
+        </Row>
       </Card>
 
       {/* 经营概览 KPI */}
       <Row gutter={[16, 16]}>
-        {kpiCards(ov).map((k) => (
+        {kpis.map((k) => (
           <Col xs={12} sm={12} md={8} key={k.title}>
-            <Card className="hp-kpi" bodyStyle={{ padding: '18px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: '#66718b', fontSize: 13, marginBottom: 8 }}>{k.title}</div>
-                  <Statistic
-                    value={k.value}
-                    formatter={(v) => (k.money ? formatCents(Number(v)) : String(v))}
-                    valueStyle={{ color: '#1f2a44', fontWeight: 700, fontSize: 22 }}
-                  />
-                </div>
-                <span
-                  className="hp-kpi-icon"
-                  style={{
-                    width: 46,
-                    height: 46,
-                    borderRadius: 13,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 22,
-                    color: '#fff',
-                    boxShadow: '0 6px 14px rgba(16,24,40,0.14)',
-                    background: `linear-gradient(135deg, ${k.color}, ${k.color}aa)`,
-                  }}
-                >
-                  {k.icon}
-                </span>
-              </div>
-            </Card>
+            <KpiCard title={k.title} value={k.value} icon={k.icon} color={k.color} formatter={k.formatter} />
           </Col>
         ))}
       </Row>
 
       {/* 基本信息 + 身份认证资料 */}
-      <Row gutter={16}>
-        <Col xs={24} md={12}>
-          <Card title="基本信息" size="small" className="hp-info-card">
-            <InfoField icon={<IdcardOutlined />} label="商户号" value={<Mono>{fmt(d.entity_code)}</Mono>} />
-            <InfoField icon={<EnvironmentOutlined />} label="主体类型" value={typeText(d.entity_type)} />
-            <InfoField icon={<UserOutlined />} label="商户名称" value={d.name} />
-            <InfoField icon={<CheckCircleOutlined />} label="状态" value={<MerchantStatusTag status={d.status} />} />
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={12}>
+          <Card className="hp-info-card" title="基本信息" size="small">
+            <InfoRow icon={<ShopOutlined />} label="商户名称">{d.name}</InfoRow>
+            <InfoRow icon={<ApartmentOutlined />} label="主体类型">{typeText(d.entity_type)}</InfoRow>
+            <InfoRow icon={<IdcardOutlined />} label="商户号"><Mono>{d.entity_code}</Mono></InfoRow>
+            <InfoRow icon={<WalletOutlined />} label="钱包号"><Mono>{d.wallet_no ?? '-'}</Mono></InfoRow>
+            <InfoRow icon={<SafetyCertificateOutlined />} label="状态"><MerchantStatusTag status={d.status} /></InfoRow>
           </Card>
         </Col>
-        <Col xs={24} md={12}>
-          <Card title="商户身份认证资料" size="small" className="hp-info-card">
-            <InfoField icon={<UserOutlined />} label="法人 / 经营者" value={fmt(kyc?.legal_name)} />
-            <InfoField icon={<IdcardOutlined />} label="证件号" value={fmt(kyc?.license_no)} />
-            <InfoField icon={<BankOutlined />} label="结算卡号" value={fmt(kyc?.bank_account)} />
-            <InfoField icon={<EnvironmentOutlined />} label="开户行" value={fmt(kyc?.bank_name)} />
-            <InfoField icon={<UserOutlined />} label="联系人" value={fmt(kyc?.contact_name)} />
-            <InfoField icon={<PhoneOutlined />} label="联系电话" value={fmt(kyc?.contact_phone)} />
+        <Col xs={24} lg={12}>
+          <Card className="hp-info-card" title="商户身份认证资料" size="small">
+            <InfoRow icon={<UserOutlined />} label="法人 / 经营者">{d.kyc_data?.legal_name}</InfoRow>
+            <InfoRow icon={<IdcardOutlined />} label="证件号">{d.kyc_data?.license_no}</InfoRow>
+            <InfoRow icon={<CreditCardOutlined />} label="结算卡号">{d.kyc_data?.bank_account}</InfoRow>
+            <InfoRow icon={<BankOutlined />} label="开户行">{d.kyc_data?.bank_name}</InfoRow>
+            <InfoRow icon={<UserOutlined />} label="联系人">{d.kyc_data?.contact_name}</InfoRow>
+            <InfoRow icon={<PhoneOutlined />} label="联系电话">{d.kyc_data?.contact_phone}</InfoRow>
           </Card>
         </Col>
       </Row>
 
       {/* 微信支付配置 */}
       <Card
+        className="hp-info-card"
         title="微信支付配置"
         size="small"
         extra={
@@ -231,26 +181,22 @@ export const MerchantDetailPage: React.FC = () => {
         {!wc ? (
           <Alert type="info" showIcon message="该商户尚未配置微信支付，点击右上角「前往配置」设置。" />
         ) : (
-          <Row gutter={16}>
+          <Row gutter={[24, 8]}>
             <Col xs={24} md={12}>
-              <Descriptions column={1} bordered size="small">
-                <Descriptions.Item label="启用"><WechatEnabledTag enabled={wc.enabled} /></Descriptions.Item>
-                <Descriptions.Item label="商户号"><Mono>{wc.mchid || '-'}</Mono></Descriptions.Item>
-                <Descriptions.Item label="AppID">{wc.appid || '-'}</Descriptions.Item>
-                <Descriptions.Item label="回调地址前缀">{wc.notify_base_url || '-'}</Descriptions.Item>
-              </Descriptions>
+              <InfoRow icon={<SafetyCertificateOutlined />} label="启用"><WechatEnabledTag enabled={wc.enabled} /></InfoRow>
+              <InfoRow icon={<WalletOutlined />} label="商户号"><Mono>{wc.mchid || '-'}</Mono></InfoRow>
+              <InfoRow icon={<ApartmentOutlined />} label="AppID">{wc.appid || '-'}</InfoRow>
+              <InfoRow icon={<GlobalOutlined />} label="回调地址前缀">{wc.notify_base_url || '-'}</InfoRow>
             </Col>
             <Col xs={24} md={12}>
-              <Descriptions column={1} bordered size="small">
-                <Descriptions.Item label="AppSecret"><ConfiguredTag configured={wc.app_secret_configured} /></Descriptions.Item>
-                <Descriptions.Item label="APIv3 密钥"><ConfiguredTag configured={wc.api_v3_key_configured} /></Descriptions.Item>
-                <Descriptions.Item label="商户 API 私钥"><ConfiguredTag configured={wc.merchant_private_key_configured} /></Descriptions.Item>
-                <Descriptions.Item label="微信平台公钥"><ConfiguredTag configured={wc.platform_public_key_configured} /></Descriptions.Item>
-              </Descriptions>
+              <InfoRow icon={<KeyOutlined />} label="AppSecret"><ConfiguredTag configured={wc.app_secret_configured} /></InfoRow>
+              <InfoRow icon={<FileProtectOutlined />} label="APIv3 密钥"><ConfiguredTag configured={wc.api_v3_key_configured} /></InfoRow>
+              <InfoRow icon={<KeyOutlined />} label="商户 API 私钥"><ConfiguredTag configured={wc.merchant_private_key_configured} /></InfoRow>
+              <InfoRow icon={<FileProtectOutlined />} label="微信平台公钥"><ConfiguredTag configured={wc.platform_public_key_configured} /></InfoRow>
             </Col>
           </Row>
         )}
       </Card>
-    </Space>
+    </div>
   );
 };

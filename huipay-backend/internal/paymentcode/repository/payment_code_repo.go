@@ -13,12 +13,15 @@ import (
 type PaymentCodeModel struct {
 	ID         uint64     `gorm:"column:id;primaryKey;autoIncrement"`
 	MerchantID uint64     `gorm:"column:merchant_id;not null"`
+	StoreID    *uint64    `gorm:"column:store_id"` // 关联门店 ID（软约束，可为 NULL）
 	CodeID     string     `gorm:"column:code_id;size:16;uniqueIndex:uk_code_id;not null"`
 	Status     int        `gorm:"column:status;not null;default:1"`
 	Remark     string     `gorm:"column:remark;size:64"`
 	CreatedAt  time.Time  `gorm:"column:created_at;autoCreateTime"`
 	DisabledAt *time.Time `gorm:"column:disabled_at"`
 	DeletedAt  *time.Time `gorm:"column:deleted_at"`
+	// 非持久字段：关联门店名称（列表查询 JOIN 填充，只读）
+	StoreName string `gorm:"->"`
 }
 
 // TableName 表名。
@@ -26,8 +29,9 @@ func (PaymentCodeModel) TableName() string { return "t_payment_code" }
 
 // PaymentCodeFilter 列表筛选条件。
 type PaymentCodeFilter struct {
-	MerchantID uint64 // 所属商户（必填）
-	Status     *int   // 状态（nil 表示不过滤）
+	MerchantID uint64  // 所属商户（必填）
+	StoreID    *uint64 // 关联门店（nil 表示不过滤）
+	Status     *int    // 状态（nil 表示不过滤）
 	Offset     int
 	Limit      int
 }
@@ -70,18 +74,26 @@ func (r *PaymentCodeRepo) GetByIDAndMerchant(ctx context.Context, id, merchantID
 	return &m, nil
 }
 
-// ListByMerchant 分页查询商户码牌。
+// ListByMerchant 分页查询商户码牌（LEFT JOIN t_store 带出门店名称）。
 func (r *PaymentCodeRepo) ListByMerchant(ctx context.Context, f PaymentCodeFilter) ([]PaymentCodeModel, int64, error) {
-	q := r.db.WithContext(ctx).Model(&PaymentCodeModel{}).Where("merchant_id = ?", f.MerchantID)
+	q := r.db.WithContext(ctx).Model(&PaymentCodeModel{}).Where("t_payment_code.merchant_id = ?", f.MerchantID)
 	if f.Status != nil {
-		q = q.Where("status = ?", *f.Status)
+		q = q.Where("t_payment_code.status = ?", *f.Status)
+	}
+	if f.StoreID != nil {
+		q = q.Where("t_payment_code.store_id = ?", *f.StoreID)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var list []PaymentCodeModel
-	if err := q.Order("id DESC").Offset(f.Offset).Limit(f.Limit).Find(&list).Error; err != nil {
+	err := q.Select("t_payment_code.*, t_store.name AS store_name").
+		Joins("LEFT JOIN t_store ON t_store.id = t_payment_code.store_id").
+		Order("t_payment_code.id DESC").
+		Offset(f.Offset).Limit(f.Limit).
+		Find(&list).Error
+	if err != nil {
 		return nil, 0, err
 	}
 	return list, total, nil
@@ -94,6 +106,19 @@ func (r *PaymentCodeRepo) Disable(ctx context.Context, id uint64) (bool, error) 
 		Model(&PaymentCodeModel{}).
 		Where("id = ? AND status = 1", id).
 		Updates(map[string]any{"status": 0, "disabled_at": now})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// UpdateStore 更新码牌关联门店（storeID 为 nil 表示解绑）。
+// 仅更新属于指定商户的码牌，返回是否真的更新。
+func (r *PaymentCodeRepo) UpdateStore(ctx context.Context, id, merchantID uint64, storeID *uint64) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&PaymentCodeModel{}).
+		Where("id = ? AND merchant_id = ?", id, merchantID).
+		Update("store_id", storeID)
 	if res.Error != nil {
 		return false, res.Error
 	}

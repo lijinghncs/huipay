@@ -34,7 +34,8 @@ func (h *Handler) merchantID(c *gin.Context) (uint64, bool) {
 
 // createReq 创建码牌请求体。
 type createReq struct {
-	Remark string `json:"remark"`
+	Remark  string `json:"remark"`
+	StoreID uint64 `json:"store_id"` // 关联门店 ID（软约束，0 表示不绑定）
 }
 
 // Create POST /v1/merchant/codes 创建码牌。
@@ -48,7 +49,7 @@ func (h *Handler) Create(c *gin.Context) {
 		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "invalid request body", 200))
 		return
 	}
-	code, err := h.svc.Create(c.Request.Context(), &service.CreateRequest{MerchantID: mid, Remark: req.Remark})
+	code, err := h.svc.Create(c.Request.Context(), &service.CreateRequest{MerchantID: mid, Remark: req.Remark, StoreID: req.StoreID})
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -80,7 +81,13 @@ func (h *Handler) List(c *gin.Context) {
 			status = &n
 		}
 	}
-	list, err := h.svc.List(c.Request.Context(), mid, page, size, status)
+	var storeID *uint64
+	if v := c.Query("store_id"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			storeID = &n
+		}
+	}
+	list, err := h.svc.List(c.Request.Context(), mid, page, size, status, storeID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -104,4 +111,33 @@ func (h *Handler) Disable(c *gin.Context) {
 		return
 	}
 	errs.OK(c, gin.H{"id": id, "status": 0})
+}
+
+// setStoreReq 绑定门店请求体。
+type setStoreReq struct {
+	StoreID uint64 `json:"store_id"` // 关联门店 ID；0 表示解绑
+}
+
+// SetStore POST /v1/merchant/codes/:id/store 绑定/解绑码牌门店。
+func (h *Handler) SetStore(c *gin.Context) {
+	mid, ok := h.merchantID(c)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	var req setStoreReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "invalid request body", 200))
+		return
+	}
+	code, err := h.svc.SetStore(c.Request.Context(), id, mid, req.StoreID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, code)
 }

@@ -20,6 +20,8 @@ export interface Order {
   order_no: string;
   merchant_order_no: string;
   merchant_id: number;
+  store_id?: number;
+  store_name?: string;
   code_id?: string;
   amount: number;
   paid_amount: number;

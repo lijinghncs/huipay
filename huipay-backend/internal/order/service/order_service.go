@@ -30,6 +30,7 @@ type PrecreateRequest struct {
 	NotifyURL       string
 	ExpireSeconds   int
 	CodeID          string // 来源收款码牌短码（可选）
+	StoreID         uint64 // 来源门店 ID（可选，0 表示无）
 }
 
 // PrecreateResponse 预下单响应。
@@ -114,6 +115,7 @@ func (s *Service) Precreate(ctx context.Context, req *PrecreateRequest) (*Precre
 		OrderNo:         orderNo,
 		MerchantOrderNo: req.MerchantOrderNo,
 		MerchantID:      req.MerchantID,
+		StoreID:         optStoreID(req.StoreID),
 		CodeID:          req.CodeID,
 		OrderType:       "PAYMENT",
 		Amount:          req.Amount,
@@ -135,10 +137,18 @@ const codeMinAmountCents int64 = 1
 // codeMaxAmountCents 码牌建单最大金额（50000.00 元）。
 const codeMaxAmountCents int64 = 5000000
 
+// optStoreID 将可选中数值转为指针（0 返回 nil）。
+func optStoreID(v uint64) *uint64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
 // PrecreateByCodeRequest 码牌建单请求（消费者扫码后输入金额）。
 type PrecreateByCodeRequest struct {
-	CodeID string
-	Amount int64 // 分
+	CodeID string `json:"code_id"`
+	Amount int64  `json:"amount"` // 分
 }
 
 // PrecreateByCode 基于收款码牌建单：反查码牌所属商户，校验金额范围，生成商户单号并落单。
@@ -164,12 +174,17 @@ func (s *Service) PrecreateByCode(ctx context.Context, req *PrecreateByCodeReque
 	}
 	// 商户单号：码牌 + 时间戳 + 随机，保证唯一（uk_merchant_order 兜底幂等）
 	merchantOrderNo := "C" + req.CodeID + time.Now().Format("060102150405") + uuid.NewString()[:8]
+	var storeID uint64
+	if code.StoreID != nil {
+		storeID = *code.StoreID
+	}
 	return s.Precreate(ctx, &PrecreateRequest{
 		MerchantID:      code.MerchantID,
 		MerchantOrderNo: merchantOrderNo,
 		Amount:          req.Amount,
 		Subject:         "扫码收款",
 		CodeID:          req.CodeID,
+		StoreID:         storeID,
 	})
 }
 
@@ -348,6 +363,7 @@ type ListRequest struct {
 	Status     string // 空 = 全部状态
 	CodeID     string // 来源收款码短码（可选）
 	Channel    string // 支付通道（可选）
+	StoreID    *uint64 // 来源门店（可选）
 	Start      *time.Time // 创建时间起（可选）
 	End        *time.Time // 创建时间止（可选）
 	Page       int
@@ -367,6 +383,7 @@ func (s *Service) ListOrders(ctx context.Context, req *ListRequest) (*ListRespon
 		Status:     req.Status,
 		CodeID:     req.CodeID,
 		Channel:    req.Channel,
+		StoreID:    req.StoreID,
 		Start:      req.Start,
 		End:        req.End,
 		Page:       req.Page,

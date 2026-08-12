@@ -166,6 +166,11 @@ func (h *Handler) List(c *gin.Context) {
 		Page:       page,
 		Size:       size,
 	}
+	if v := c.Query("store_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			req.StoreID = &id
+		}
+	}
 	if v := c.Query("start"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			req.Start = &t

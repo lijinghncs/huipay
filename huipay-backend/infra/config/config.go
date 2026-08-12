@@ -3,6 +3,8 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -13,13 +15,23 @@ type Config struct {
 	HTTPPort    int    `mapstructure:"http_port"`
 	GinMode     string `mapstructure:"gin_mode"`     // debug / release / test
 	LogLevel    string `mapstructure:"log_level"`    // debug / info / warn / error
+	LogFile     LogFileConfig `mapstructure:"log_file"` // 日志文件输出配置（落盘 + 轮转）
 	MySQLMaster string `mapstructure:"mysql_master"` // 主库 DSN
 	MySQLSlave  string `mapstructure:"mysql_slave"`  // 从库 DSN（可空）
 	AppName     string `mapstructure:"app_name"`
 	AppEnv      string `mapstructure:"app_env"` // local / staging / production
 	AuthSecret  string `mapstructure:"auth_secret"` // 商户登录 token 签名密钥（生产必配）
 	TrustMerchantHeader bool `mapstructure:"trust_merchant_header"` // 是否信任 X-Merchant-Id 明文头（仅开发；生产置 false）
+	CheckoutBaseURL string `mapstructure:"checkout_base_url"` // 收银台 H5 地址前缀，如 https://checkout.huipay.cn
 	WeChat      WeChatConfig `mapstructure:"wechat"`
+}
+
+// LogFileConfig 日志文件输出配置（落盘 + 轮转）。
+type LogFileConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`     // 是否写入文件
+	Path       string `mapstructure:"path"`        // 日志文件路径，如 logs/app.log
+	MaxSizeMB  int    `mapstructure:"max_size_mb"` // 单个日志文件最大大小（MB），超过则轮转
+	MaxAgeDay  int    `mapstructure:"max_age_day"` // 保留天数
 }
 
 // WeChatConfig 微信支付 V3 相关配置。
@@ -43,6 +55,15 @@ func Load() *Config {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
+
+	// 基于源码位置动态定位项目根目录（huipay-backend），加入绝对搜索路径，
+	// 避免因 go run 工作目录不同而找不到 infra/config/config.yaml。
+	if _, srcFile, _, ok := runtime.Caller(0); ok {
+		// srcFile = <root>/infra/config/config.go，上两级即项目根
+		root := filepath.Dir(filepath.Dir(filepath.Dir(srcFile)))
+		v.AddConfigPath(filepath.Join(root, "infra", "config"))
+		v.AddConfigPath(filepath.Join(root, "configs"))
+	}
 	v.AddConfigPath("./configs")
 	v.AddConfigPath("./infra/config")
 	v.AddConfigPath("/opt/huipay/config")
@@ -58,6 +79,7 @@ func Load() *Config {
 	v.SetDefault("app_name", "huipay-backend")
 	v.SetDefault("app_env", "local")
 	v.SetDefault("trust_merchant_header", true)
+	v.SetDefault("checkout_base_url", "https://checkout.huipay.cn")
 	v.SetDefault("mysql_master", "huipay:huipay@tcp(127.0.0.1:3306)/huipay_main?charset=utf8mb4&parseTime=True&loc=Local")
 
 	if err := v.ReadInConfig(); err != nil {

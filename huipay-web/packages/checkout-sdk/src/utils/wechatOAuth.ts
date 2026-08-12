@@ -10,6 +10,21 @@ export function readOpenId(): string {
   return new URLSearchParams(window.location.search).get('openid') ?? '';
 }
 
+/** 生成 mock openid（非微信环境联调用）：固定前缀 + 随机数，形如 mock_openid_<随机>。 */
+export function mockOpenId(): string {
+  return `mock_openid_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 解析当前 openid：优先取 URL 中的真实 openid；非微信环境（本地/浏览器联调）回退 mock openid。
+ * 微信内仍返回真实 openid（真实环境由 OAuth 回调注入）。
+ */
+export function resolveOpenId(): string {
+  const real = readOpenId();
+  if (real) return real;
+  return isWeixinBrowser() ? '' : mockOpenId();
+}
+
 /** 构造后端微信 OAuth 授权跳转地址。 */
 export function buildOAuthAuthorizeUrl(apiBase: string, redirectUri: string): string {
   return `${apiBase}/v1/oauth/wechat/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`;

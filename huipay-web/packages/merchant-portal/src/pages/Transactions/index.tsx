@@ -6,11 +6,11 @@ import { useSearchParams } from 'react-router-dom';
 import { StatusTag } from '@huipay/ui-kit';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import type { Order, QueryResult } from '@huipay/shared';
-import { getOrder, listOrders, queryOrder } from '../../services/user';
-
-const { RangePicker } = DatePicker;
+import { getOrder, listOrders, listStores, queryOrder } from '../../services/user';
 
 const channelLabel: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝' };
+
+const { RangePicker } = DatePicker;
 
 const statusTag = (v: string) => <StatusTag status={v} />;
 
@@ -21,7 +21,17 @@ export const Transactions: React.FC = () => {
   const [status, setStatus] = React.useState<string | undefined>();
   const [channel, setChannel] = React.useState<string | undefined>();
   const [codeId, setCodeId] = React.useState('');
+  const [storeId, setStoreId] = React.useState<number | undefined>();
   const [range, setRange] = React.useState<[string, string] | null>(null);
+
+  // 已提交的筛选条件：仅点击"查询"时更新，避免改下拉/日期就触发自动查询
+  const [applied, setApplied] = React.useState<{
+    status?: string;
+    channel?: string;
+    codeId: string;
+    storeId?: number;
+    range: [string, string] | null;
+  }>({ status, channel, codeId, storeId, range });
 
   const [detailOrderNo, setDetailOrderNo] = React.useState<string | null>(searchParams.get('order_no'));
   const [channelResult, setChannelResult] = React.useState<QueryResult | null>(null);
@@ -29,17 +39,23 @@ export const Transactions: React.FC = () => {
   const [queryError, setQueryError] = React.useState('');
 
   const listQuery = useQuery({
-    queryKey: ['orders', page, size, status, channel, codeId, range],
+    queryKey: ['orders', page, size, applied.status, applied.channel, applied.codeId, applied.storeId, applied.range],
     queryFn: () =>
       listOrders({
         page,
         size,
-        status,
-        channel,
-        code_id: codeId || undefined,
-        start: range?.[0],
-        end: range?.[1],
+        status: applied.status,
+        channel: applied.channel,
+        code_id: applied.codeId || undefined,
+        store_id: applied.storeId,
+        start: applied.range?.[0],
+        end: applied.range?.[1],
       }),
+  });
+
+  const storesQuery = useQuery({
+    queryKey: ['stores', 'options'],
+    queryFn: () => listStores({ page: 1, size: 200 }),
   });
 
   const detailQuery = useQuery({
@@ -84,6 +100,7 @@ export const Transactions: React.FC = () => {
     { title: '订单号', dataIndex: 'order_no', key: 'order_no', width: 220 },
     { title: '商户单号', dataIndex: 'merchant_order_no', key: 'merchant_order_no', width: 180 },
     { title: '来源码牌', dataIndex: 'code_id', key: 'code_id', width: 100, render: (v?: string) => v || '-' },
+    { title: '门店', dataIndex: 'store_name', key: 'store_name', width: 120, render: (v?: string) => v || '-' },
     { title: '金额', dataIndex: 'amount', key: 'amount', render: (v: number) => formatCents(v) },
     { title: '实付', dataIndex: 'paid_amount', key: 'paid_amount', render: (v: number) => formatCents(v) },
     { title: '通道', dataIndex: 'channel', key: 'channel', width: 100, render: (v?: string) => (v ? channelLabel[v] ?? v : '-') },
@@ -93,80 +110,118 @@ export const Transactions: React.FC = () => {
   ];
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card>
-        <Space wrap>
-          <Select
-            allowClear
-            placeholder="订单状态"
-            style={{ width: 140 }}
-            value={status}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
-            options={[
-              { value: 'CREATED', label: '待支付' },
-              { value: 'PAID', label: '已支付' },
-              { value: 'CLOSED', label: '已关闭' },
-            ]}
-          />
-          <Select
-            allowClear
-            placeholder="支付通道"
-            style={{ width: 140 }}
-            value={channel}
-            onChange={(v) => {
-              setChannel(v);
-              setPage(1);
-            }}
-            options={[
-              { value: 'WECHAT', label: '微信支付' },
-              { value: 'ALIPAY', label: '支付宝' },
-            ]}
-          />
-          <Input
-            placeholder="来源码牌短码"
-            style={{ width: 160 }}
-            allowClear
-            value={codeId}
-            onChange={(e) => setCodeId(e.target.value)}
-            onPressEnter={() => setPage(1)}
-          />
-          <RangePicker
-            onChange={(v) => {
-              if (v && v[0] && v[1]) {
-                setRange([v[0].startOf('day').toISOString(), v[1].endOf('day').toISOString()]);
-              } else {
+    <div className="hp-page" style={{ minHeight: 'calc(100vh - 84px)' }}>
+      <Card
+        title={<Typography.Text strong style={{ fontSize: 16 }}>交易筛选</Typography.Text>}
+        style={{ boxShadow: 'var(--shadow-card)' }}
+      >
+        <Space wrap size="middle" style={{ rowGap: 16 }}>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>订单状态</Typography.Text>
+            <Select
+              allowClear
+              placeholder="全部"
+              style={{ width: 140 }}
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: 'CREATED', label: '待支付' },
+                { value: 'PAID', label: '已支付' },
+                { value: 'CLOSED', label: '已关闭' },
+              ]}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>支付通道</Typography.Text>
+            <Select
+              allowClear
+              placeholder="全部"
+              style={{ width: 140 }}
+              value={channel}
+              onChange={setChannel}
+              options={[
+                { value: 'WECHAT', label: '微信支付' },
+                { value: 'ALIPAY', label: '支付宝' },
+              ]}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>来源码牌</Typography.Text>
+            <Input
+              placeholder="短码"
+              style={{ width: 160 }}
+              value={codeId}
+              onChange={(e) => setCodeId(e.target.value)}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>所属门店</Typography.Text>
+            <Select
+              allowClear
+              showSearch
+              placeholder="选择门店"
+              style={{ width: 160 }}
+              value={storeId}
+              onChange={setStoreId}
+              options={(storesQuery.data?.items ?? []).map((s) => ({ value: s.id, label: s.name }))}
+              loading={storesQuery.isLoading}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>日期范围</Typography.Text>
+            <RangePicker
+              onChange={(v) => {
+                if (v && v[0] && v[1]) {
+                  setRange([v[0].startOf('day').toISOString(), v[1].endOf('day').toISOString()]);
+                } else {
+                  setRange(null);
+                }
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginLeft: 4 }}>
+            <Button
+              type="primary"
+              onClick={() => {
+                setApplied({ status, channel, codeId, storeId, range });
+                setPage(1);
+              }}
+            >
+              查询
+            </Button>
+            <Button
+              onClick={() => {
+                setStatus(undefined);
+                setChannel(undefined);
+                setCodeId('');
+                setStoreId(undefined);
                 setRange(null);
-              }
-              setPage(1);
-            }}
-          />
-          <Button type="primary" onClick={() => setPage(1)}>
-            查询
-          </Button>
-          <Button
-            onClick={() => {
-              setStatus(undefined);
-              setChannel(undefined);
-              setCodeId('');
-              setRange(null);
-              setPage(1);
-            }}
-          >
-            重置
-          </Button>
+                setApplied({ status: undefined, channel: undefined, codeId: '', storeId: undefined, range: null });
+                setPage(1);
+              }}
+            >
+              重置
+            </Button>
+          </div>
         </Space>
       </Card>
 
-      <Card title="交易列表">
+      <Card
+        title={
+          <Space size="large">
+            <span style={{ fontSize: 16 }}>交易列表</span>
+            <Tag color="blue" style={{ borderRadius: 10 }}>{listQuery.data?.total ?? 0}</Tag>
+          </Space>
+        }
+        style={{ marginTop: 20, boxShadow: 'var(--shadow-card)' }}
+      >
         <Space size="large" style={{ marginBottom: 16 }}>
           <Statistic title="本页订单数" value={items.length} suffix={`/ ${listQuery.data?.total ?? 0}`} />
-          <Statistic title="本页金额合计" value={pageAmount} formatter={(v) => formatCents(Number(v))} />
+          <Statistic title="本页金额合计" value={pageAmount} formatter={(v) => formatCents(Number(v))} valueStyle={{ color: 'var(--brand)' }} />
           <Statistic title="本页实付合计" value={pagePaid} formatter={(v) => formatCents(Number(v))} valueStyle={{ color: '#06b6a4' }} />
         </Space>
         <Table<Order>
+          className="hp-zebra"
           rowKey="order_no"
           columns={columns}
           dataSource={items}
@@ -197,6 +252,7 @@ export const Transactions: React.FC = () => {
               <Descriptions.Item label="订单号">{detail.order_no}</Descriptions.Item>
               <Descriptions.Item label="商户单号">{detail.merchant_order_no}</Descriptions.Item>
               <Descriptions.Item label="来源码牌">{detail.code_id || '-'}</Descriptions.Item>
+              <Descriptions.Item label="所属门店">{detail.store_name || '-'}</Descriptions.Item>
               <Descriptions.Item label="订单金额">{formatCents(detail.amount)}</Descriptions.Item>
               <Descriptions.Item label="实付金额">{formatCents(detail.paid_amount ?? 0)}</Descriptions.Item>
               <Descriptions.Item label="支付通道">
@@ -210,7 +266,7 @@ export const Transactions: React.FC = () => {
               {detail.expire_at && <Descriptions.Item label="过期时间">{formatDateTime(detail.expire_at)}</Descriptions.Item>}
             </Descriptions>
 
-            <Space style={{ marginTop: 16 }}>
+            <Space style={{ marginTop: 20 }}>
               <Button loading={queryLoading} onClick={runChannelQuery} disabled={!detail.channel}>
                 查询通道状态
               </Button>
@@ -235,9 +291,9 @@ export const Transactions: React.FC = () => {
                       <>
                         <span>实付金额：{formatCents(channelResult.paid_amount)}</span>
                         <span>渠道交易号：{channelResult.channel_trade_no || '-'}</span>
-                        {channelResult.paid_at ? (
+                        {channelResult.paid_at && (
                           <span>支付时间：{formatDateTime(new Date(channelResult.paid_at * 1000).toISOString())}</span>
-                        ) : null}
+                        )}
                       </>
                     )}
                     {!channelResult.paid && <span>本地状态：{channelResult.local_status}</span>}
@@ -248,6 +304,6 @@ export const Transactions: React.FC = () => {
           </>
         )}
       </Drawer>
-    </Space>
+    </div>
   );
 };

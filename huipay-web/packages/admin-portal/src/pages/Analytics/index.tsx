@@ -1,16 +1,14 @@
 // 概览/BI 看板
 import React, { useEffect, useState } from 'react';
-import { Card, Col, Row, Skeleton, Alert, Space, Statistic, Button } from 'antd';
+import { Card, Col, Row, Skeleton, Alert, Button } from 'antd';
 import {
   AccountBookOutlined,
   ShoppingCartOutlined,
   TeamOutlined,
   WalletOutlined,
-  RiseOutlined,
-  FallOutlined,
 } from '@ant-design/icons';
-import { Money } from '@huipay/ui-kit';
 import ReactECharts from 'echarts-for-react';
+import { KpiCard } from '../../components/KpiCard';
 
 const kpiCards = [
   {
@@ -132,47 +130,21 @@ export const Analytics: React.FC = () => {
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Row gutter={[16, 16]}>
         {kpiCards.map((k) => (
           <Col xs={12} sm={12} md={6} key={k.title}>
-            <Card>
-              {loading ? (
-                <Skeleton active paragraph={{ rows: 1 }} title={{ width: '60%' }} />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ color: '#66718b', fontSize: 13, marginBottom: 8 }}>{k.title}</div>
-                    <Statistic
-                      value={k.value}
-                      prefix={k.prefix}
-                      precision={k.precision}
-                      valueStyle={{ color: '#1f2a44', fontWeight: 700 }}
-                    />
-                  </div>
-                  <span
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 10,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 20,
-                      color: '#fff',
-                      background: `linear-gradient(135deg, ${k.color}, ${k.color}cc)`,
-                    }}
-                  >
-                    {k.icon}
-                  </span>
-                </div>
-              )}
-              {!loading && (
-                <div style={{ marginTop: 12, fontSize: 12, color: '#66718b' }}>
-                  较昨日 {k.up ? <span style={{ color: '#06b6a4' }}><RiseOutlined />{k.trend}%</span> : <span style={{ color: '#f5222d' }}><FallOutlined />{Math.abs(k.trend)}%</span>}
-                </div>
-              )}
-            </Card>
+            <KpiCard
+              title={k.title}
+              value={k.value}
+              prefix={k.prefix}
+              precision={k.precision}
+              icon={k.icon}
+              color={k.color}
+              trend={k.trend}
+              up={k.up}
+              loading={loading}
+            />
           </Col>
         ))}
       </Row>
@@ -180,6 +152,6 @@ export const Analytics: React.FC = () => {
       <Card title="近 7 日交易趋势">
         {loading ? <Skeleton active paragraph={{ rows: 6 }} /> : <ReactECharts option={chartOption} style={{ height: 320 }} />}
       </Card>
-    </Space>
+    </div>
   );
 };

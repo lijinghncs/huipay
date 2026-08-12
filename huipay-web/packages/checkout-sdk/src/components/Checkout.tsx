@@ -4,33 +4,11 @@ import { Alert, Button, Radio, Space, Typography, Divider, QRCode } from 'antd';
 import { useCheckoutUI } from '../hooks/useCheckoutUI';
 import { useCheckout } from '../hooks/useCheckout';
 import { usePay } from '../hooks/usePay';
+import { invokeWechatPay } from '../utils/wechatPay';
 import { formatCents } from '@huipay/shared/utils';
-import type { CheckoutProps, PayType, JSAPIParams } from '../types';
+import type { CheckoutProps, PayType } from '../types';
 
 const { Text, Title } = Typography;
-
-/** 微信内拉起 JSAPI 支付（WeixinJSBridge.getBrandWCPayRequest）。 */
-function invokeWechatPay(params: JSAPIParams, onOk: () => void, onFail: (e: Error) => void) {
-  const w = window as { WeixinJSBridge?: { invoke: (name: string, args: unknown, cb: (res: { err_msg: string }) => void) => void } };
-  const doInvoke = () => {
-    w.WeixinJSBridge?.invoke('getBrandWCPayRequest', params, (res) => {
-      const msg = res?.err_msg ?? '';
-      if (msg === 'get_brand_wcpay_request:ok') {
-        onOk();
-      } else if (msg === 'get_brand_wcpay_request:cancel') {
-        onFail(new Error('用户已取消支付'));
-      } else {
-        onFail(new Error(msg || '拉起微信支付失败'));
-      }
-    });
-  };
-  // JSBridge 可能尚未就绪，监听 ready 事件后再拉起
-  if (w.WeixinJSBridge && typeof w.WeixinJSBridge.invoke === 'function') {
-    doInvoke();
-  } else {
-    document.addEventListener('WeixinJSBridgeReady', doInvoke as EventListener, { once: true });
-  }
-}
 
 const PAY_TYPES: { value: PayType; label: string }[] = [
   { value: 'NATIVE', label: '扫码支付' },
@@ -53,6 +31,7 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
     openId,
     defaultPayType = 'NATIVE',
     showPayTypeSelector = true,
+    showChannelSelector = true,
   } = props;
   const { order, isPaid, channelPaid, finalAmount } = useCheckout(props);
   const { selectedChannel, setSelectedChannel, selectedPayType, setSelectedPayType, isProcessing, setProcessing } =
@@ -168,20 +147,22 @@ export const HuiPayCheckout: React.FC<CheckoutProps> = (props) => {
             </div>
           </div>
         )}
-        <div>
-          <Text strong>选择支付方式</Text>
-          <Radio.Group
-            value={selectedChannel}
-            onChange={(e) => setSelectedChannel(e.target.value)}
-            style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}
-          >
-            {channels.map((c) => (
-              <Radio key={c.code} value={c.code} disabled={!c.available}>
-                {c.code}（费率 {c.fee_rate}）
-              </Radio>
-            ))}
-          </Radio.Group>
-        </div>
+        {showChannelSelector && (
+          <div>
+            <Text strong>选择支付方式</Text>
+            <Radio.Group
+              value={selectedChannel}
+              onChange={(e) => setSelectedChannel(e.target.value)}
+              style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}
+            >
+              {channels.map((c) => (
+                <Radio key={c.code} value={c.code} disabled={!c.available}>
+                  {c.code}（费率 {c.fee_rate}）
+                </Radio>
+              ))}
+            </Radio.Group>
+          </div>
+        )}
         {showPayTypeSelector && (
           <div>
             <Text strong>选择支付场景</Text>

@@ -62,13 +62,14 @@ type OrderListFilter struct {
 	Status     string     // 空 = 全部状态
 	CodeID     string     // 来源收款码短码（可选）
 	Channel    string     // 支付通道（可选）
+	StoreID    *uint64    // 来源门店（可选）
 	Start      *time.Time // 创建时间起（可选）
 	End        *time.Time // 创建时间止（可选）
 	Page       int
 	Size       int
 }
 
-// ListByMerchant 按商户号分页查询订单（created_at DESC），支持状态/码牌/通道/时间过滤。
+// ListByMerchant 按商户号分页查询订单（created_at DESC），支持状态/码牌/通道/门店/时间过滤。
 func (r *OrderRepo) ListByMerchant(ctx context.Context, f OrderListFilter) ([]model.OrderModel, int64, error) {
 	if f.Page < 1 {
 		f.Page = 1
@@ -78,21 +79,24 @@ func (r *OrderRepo) ListByMerchant(ctx context.Context, f OrderListFilter) ([]mo
 	}
 
 	q := r.db.WithContext(ctx).Model(&model.OrderModel{})
-	q = q.Where("merchant_id = ?", f.MerchantID)
+	q = q.Where("t_order.merchant_id = ?", f.MerchantID)
 	if f.Status != "" {
-		q = q.Where("status = ?", f.Status)
+		q = q.Where("t_order.status = ?", f.Status)
 	}
 	if f.CodeID != "" {
-		q = q.Where("code_id = ?", f.CodeID)
+		q = q.Where("t_order.code_id = ?", f.CodeID)
 	}
 	if f.Channel != "" {
-		q = q.Where("channel = ?", f.Channel)
+		q = q.Where("t_order.channel = ?", f.Channel)
+	}
+	if f.StoreID != nil {
+		q = q.Where("t_order.store_id = ?", *f.StoreID)
 	}
 	if f.Start != nil {
-		q = q.Where("created_at >= ?", *f.Start)
+		q = q.Where("t_order.created_at >= ?", *f.Start)
 	}
 	if f.End != nil {
-		q = q.Where("created_at <= ?", *f.End)
+		q = q.Where("t_order.created_at <= ?", *f.End)
 	}
 
 	var total int64
@@ -101,7 +105,12 @@ func (r *OrderRepo) ListByMerchant(ctx context.Context, f OrderListFilter) ([]mo
 	}
 
 	var rows []model.OrderModel
-	if err := q.Order("created_at DESC").Offset((f.Page - 1) * f.Size).Limit(f.Size).Find(&rows).Error; err != nil {
+	err := q.Select("t_order.*, t_store.name AS store_name").
+		Joins("LEFT JOIN t_store ON t_store.id = t_order.store_id").
+		Order("t_order.created_at DESC").
+		Offset((f.Page - 1) * f.Size).Limit(f.Size).
+		Find(&rows).Error
+	if err != nil {
 		return nil, 0, err
 	}
 	return rows, total, nil
