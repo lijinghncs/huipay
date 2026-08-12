@@ -395,6 +395,30 @@ func (s *Service) ListOrders(ctx context.Context, req *ListRequest) (*ListRespon
 	return &ListResponse{Items: rows, Total: total}, nil
 }
 
+// StatsRequest 订单统计请求（复用 ListRequest 的过滤字段，不含分页）。
+type StatsRequest struct {
+	MerchantID uint64
+	Status     string     // 空 = 全部状态
+	CodeID     string     // 来源收款码短码（可选）
+	Channel    string     // 支付通道（可选）
+	StoreID    *uint64    // 来源门店（可选）
+	Start      *time.Time // 创建时间起（可选）
+	End        *time.Time // 创建时间止（可选）
+}
+
+// Stats 按商户号聚合统计订单（筛选范围内全部订单，口径与列表一致）。
+func (s *Service) Stats(ctx context.Context, req *StatsRequest) (*repository.OrderStats, error) {
+	return s.repo.StatsByMerchant(ctx, repository.OrderListFilter{
+		MerchantID: req.MerchantID,
+		Status:     req.Status,
+		CodeID:     req.CodeID,
+		Channel:    req.Channel,
+		StoreID:    req.StoreID,
+		Start:      req.Start,
+		End:        req.End,
+	})
+}
+
 // EmbedInfoResponse 收银台 embed 预下单信息（简版，不返回 token）。
 type EmbedInfoResponse struct {
 	OrderNo  string             `json:"order_no"`

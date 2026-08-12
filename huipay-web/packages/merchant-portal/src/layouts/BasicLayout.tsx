@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { App as AntApp, Avatar, Breadcrumb, Button, Drawer, Grid, Layout, Menu, Space, theme } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { DashboardOutlined, TransactionOutlined, QrcodeOutlined, WalletOutlined, BranchesOutlined, ShopOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MenuOutlined, LogoutOutlined } from '@ant-design/icons';
+import { DashboardOutlined, TransactionOutlined, QrcodeOutlined, WalletOutlined, BranchesOutlined, ShopOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MenuOutlined, LogoutOutlined, BarChartOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { clearToken } from '../services/auth';
 import { getMerchantProfile } from '../services/user';
@@ -13,6 +13,7 @@ const { useBreakpoint } = Grid;
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '概览' },
   { key: '/transactions', icon: <TransactionOutlined />, label: '交易' },
+  { key: '/transaction-stats', icon: <BarChartOutlined />, label: '交易统计' },
   { key: '/codes', icon: <QrcodeOutlined />, label: '收款码' },
   { key: '/stores', icon: <ShopOutlined />, label: '门店' },
   { key: '/wallets', icon: <WalletOutlined />, label: '钱包' },
@@ -22,6 +23,7 @@ const menuItems = [
 const titleMap: Record<string, string> = {
   '/': '概览',
   '/transactions': '交易',
+  '/transaction-stats': '交易统计',
   '/codes': '收款码',
   '/stores': '门店',
   '/wallets': '钱包',

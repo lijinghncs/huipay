@@ -65,6 +65,22 @@ body {
   background: #f5f8ff !important;
 }
 
+/* 交易列表表格：行高、表头、分隔礼遇 */
+.hp-tx-table .ant-table-thead > tr > th {
+  background: #f6f8fc;
+  color: #5b6b81;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid #eef1f7;
+}
+.hp-tx-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid #f2f4f9;
+  transition: background 0.15s ease;
+}
+.hp-tx-table .ant-table-row {
+  cursor: pointer;
+}
+
 /* 布局 · 侧栏菜单项定位指示条 */
 .hp-sider .ant-menu-item {
   position: relative;
@@ -111,6 +127,105 @@ body {
 }
 .hp-kpi:hover {
   transform: translateY(-2px);
+}
+
+/* 交易统计 · 顶部汇总 Hero 横幅 */
+.hp-stats-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 26px 30px;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, #0e1a2b 0%, #1e6fff 100%);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(30, 111, 255, 0.28);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 20px;
+}
+.hp-stats-hero::before {
+  content: '';
+  position: absolute;
+  right: -70px;
+  top: -70px;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 182, 164, 0.4), transparent 70%);
+  pointer-events: none;
+}
+.hp-stats-hero::after {
+  content: '';
+  position: absolute;
+  left: 40%;
+  bottom: -120px;
+  width: 320px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 70%);
+  pointer-events: none;
+}
+.hp-stat-metric {
+  position: relative;
+  z-index: 1;
+  padding: 4px 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  padding-left: 16px;
+}
+.hp-stat-metric:first-child {
+  border-left: none;
+  padding-left: 0;
+}
+.hp-stat-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+.hp-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+}
+.hp-stat-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 6px;
+}
+
+/* 交易统计 · 分组表占比条 */
+.hp-stat-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.hp-stat-bar-track {
+  flex: 1;
+  max-width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: #eef1f7;
+  overflow: hidden;
+}
+.hp-stat-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--brand), #06b6a4);
+}
+
+/* 交易统计 · 分组表颜色微标 */
+.hp-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hp-stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* 信息区字段行（概览资料卡） */

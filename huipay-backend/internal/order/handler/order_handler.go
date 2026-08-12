@@ -189,6 +189,43 @@ func (h *Handler) List(c *gin.Context) {
 	errs.OK(c, resp)
 }
 
+// Stats GET /v1/checkout/stats。
+// 统计当前筛选条件下全部订单（状态/通道/码牌/门店/时间过滤，口径与 List 一致）。
+func (h *Handler) Stats(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	req := &service.StatsRequest{
+		MerchantID: merchantID,
+		Status:     c.Query("status"),
+		CodeID:     c.Query("code_id"),
+		Channel:    c.Query("channel"),
+	}
+	if v := c.Query("store_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			req.StoreID = &id
+		}
+	}
+	if v := c.Query("start"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			req.Start = &t
+		}
+	}
+	if v := c.Query("end"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			req.End = &t
+		}
+	}
+	resp, err := h.svc.Stats(c.Request.Context(), req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
 // parsePageSize 解析 page/size 查询参数，非法值回落默认。
 func parsePageSize(c *gin.Context) (page, size int) {
 	page, _ = strconv.Atoi(c.Query("page"))

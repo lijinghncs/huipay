@@ -257,6 +257,7 @@ func main() {
 		v1.POST("/checkout/precreate", orderH.Precreate)
 		v1.POST("/checkout/precreate-by-code", orderH.PrecreateByCode)
 		v1.GET("/checkout/list", orderH.List)
+		v1.GET("/checkout/stats", orderH.Stats)
 		v1.POST("/checkout/embed-info", orderH.EmbedInfo)
 		v1.GET("/checkout/:order_no", orderH.Get)
 		v1.GET("/checkout/:order_no/query", orderH.Query)

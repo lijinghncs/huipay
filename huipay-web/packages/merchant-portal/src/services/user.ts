@@ -29,6 +29,38 @@ export async function listOrders(params: {
   return get<{ items: Order[]; total: number }>('/v1/checkout/list', { params });
 }
 
+/** 订单统计单行。 */
+export interface OrderStatRow {
+  key: string;
+  label: string;
+  order_count: number;
+  amount: number;
+  paid: number;
+}
+
+/** 订单统计（筛选范围内全部订单）。 */
+export interface OrderStats {
+  order_count: number;
+  paid_order_count: number;
+  total_amount: number;
+  total_paid: number;
+  by_status: OrderStatRow[];
+  by_channel: OrderStatRow[];
+  by_store: OrderStatRow[];
+}
+
+/** 拉取订单统计（聚合当前筛选条件下全部订单）。 */
+export async function getOrderStats(params: {
+  status?: string;
+  channel?: string;
+  code_id?: string;
+  store_id?: number;
+  start?: string;
+  end?: string;
+} = {}): Promise<OrderStats> {
+  return get<OrderStats>('/v1/checkout/stats', { params });
+}
+
 /** 单笔订单查询。 */
 export async function getOrder(orderNo: string): Promise<Order> {
   return get<Order>(`/v1/checkout/${orderNo}`);
