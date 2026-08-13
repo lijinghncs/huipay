@@ -52,15 +52,26 @@ func (s *Service) GetWallet(ctx context.Context, entityID uint64) (*repository.W
 	return w, nil
 }
 
+// GetWalletByEntityType 按主体 ID + 类型查询钱包（用于门店等多类型主体）。
+func (s *Service) GetWalletByEntityType(ctx context.Context, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
+	w, err := s.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
+	if err != nil {
+		return nil, err
+	}
+	if w == nil {
+		return nil, errors.New("wallet not found")
+	}
+	return w, nil
+}
+
 // EnsureWalletTx 在指定事务内确保主体钱包存在（创建或返回已存在），用于与主体创建同事务提交。
 func (s *Service) EnsureWalletTx(ctx context.Context, tx *gorm.DB, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
-	var w repository.WalletModel
-	err := tx.WithContext(ctx).Where("entity_id = ?", entityID).First(&w).Error
-	if err == nil {
-		return &w, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	w, err := s.walletRepo.GetByEntityTypeTx(ctx, tx, entityID, string(entityType))
+	if err != nil {
 		return nil, err
+	}
+	if w != nil {
+		return w, nil
 	}
 	m := &repository.WalletModel{
 		WalletNo:   "W" + uuid.NewString()[:16],
@@ -71,8 +82,9 @@ func (s *Service) EnsureWalletTx(ctx context.Context, tx *gorm.DB, entityID uint
 	}
 	if err := tx.WithContext(ctx).Create(m).Error; err != nil {
 		// 并发创建时唯一索引冲突 → 重新查
-		if err2 := tx.WithContext(ctx).Where("entity_id = ?", entityID).First(&w).Error; err2 == nil {
-			return &w, nil
+		w2, _ := s.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
+		if w2 != nil {
+			return w2, nil
 		}
 		return nil, err
 	}
@@ -181,9 +193,9 @@ func (s *Service) ListEntriesFiltered(ctx context.Context, entityID uint64, q En
 	return &EntryList{Items: items, Total: total, Page: q.Page, Size: q.Size}, nil
 }
 
-// EnsureWallet 确保主体钱包存在（创建或返回已存在）。
+// EnsureWallet 确保主体钱包存在（创建或返回已存在），按 (entity_id, entity_type) 定位。
 func (s *Service) EnsureWallet(ctx context.Context, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
-	w, err := s.walletRepo.GetByEntity(ctx, entityID)
+	w, err := s.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +211,7 @@ func (s *Service) EnsureWallet(ctx context.Context, entityID uint64, entityType 
 	}
 	if err := s.walletRepo.DB().WithContext(ctx).Create(m).Error; err != nil {
 		// 并发创建时唯一索引冲突 → 重新查
-		w2, _ := s.walletRepo.GetByEntity(ctx, entityID)
+		w2, _ := s.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
 		if w2 != nil {
 			return w2, nil
 		}

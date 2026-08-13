@@ -53,10 +53,22 @@ type WalletRepo struct{ db *gorm.DB }
 // NewWalletRepo 构造 WalletRepo。
 func NewWalletRepo(db *gorm.DB) *WalletRepo { return &WalletRepo{db: db} }
 
-// GetByEntity 按主体查询钱包。
+// GetByEntity 按主体查询钱包（默认 MERCHANT 等单主体场景；多主体类型请用 GetByEntityType）。
 func (r *WalletRepo) GetByEntity(ctx context.Context, entityID uint64) (*WalletModel, error) {
 	var m WalletModel
 	if err := r.db.WithContext(ctx).Where("entity_id = ?", entityID).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetByEntityType 按主体 ID + 类型查询钱包（门店/商户/平台等类型隔离，避免 id 自增空间冲突）。
+func (r *WalletRepo) GetByEntityType(ctx context.Context, entityID uint64, entityType string) (*WalletModel, error) {
+	var m WalletModel
+	if err := r.db.WithContext(ctx).Where("entity_id = ? AND entity_type = ?", entityID, entityType).First(&m).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -105,6 +117,18 @@ func (r *WalletRepo) GetByIDTx(ctx context.Context, tx *gorm.DB, id uint64) (*Wa
 func (r *WalletRepo) GetByEntityTx(ctx context.Context, tx *gorm.DB, entityID uint64) (*WalletModel, error) {
 	var m WalletModel
 	if err := tx.WithContext(ctx).Where("entity_id = ?", entityID).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetByEntityTypeTx 在指定事务内按主体 ID + 类型查询钱包。
+func (r *WalletRepo) GetByEntityTypeTx(ctx context.Context, tx *gorm.DB, entityID uint64, entityType string) (*WalletModel, error) {
+	var m WalletModel
+	if err := tx.WithContext(ctx).Where("entity_id = ? AND entity_type = ?", entityID, entityType).First(&m).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}

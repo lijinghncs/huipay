@@ -50,6 +50,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             darkItemSelectedBg: '#1e6fff',
             darkItemColor: 'rgba(255,255,255,0.72)',
             darkItemHoverColor: '#ffffff',
+            darkItemHoverBg: 'rgba(255,255,255,0.08)',
+            itemHeight: 40,
+            itemMarginInline: 10,
+            itemBorderRadius: 10,
           },
           Card: {
             headerBg: 'transparent',

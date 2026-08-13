@@ -81,40 +81,6 @@ body {
   cursor: pointer;
 }
 
-/* 布局 · 侧栏菜单项定位指示条 */
-.hp-sider .ant-menu-item {
-  position: relative;
-  margin-inline: 8px;
-  width: calc(100% - 16px);
-  border-radius: 8px;
-}
-.hp-sider .ant-menu-item-selected::after {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 18px;
-  border-radius: 0 3px 3px 0;
-  background: #06b6a4;
-}
-.hp-sider .ant-menu-item-selected {
-  box-shadow: inset 0 0 0 1px rgba(30, 111, 255, 0.35);
-}
-
-/* 布局 · 侧栏底部版本标识 */
-.hp-sider-footer {
-  padding: 12px 16px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 11px;
-  letter-spacing: 0.3px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* KPI 卡片 hover 动效 */
 .hp-kpi {
   cursor: default;
@@ -265,4 +231,398 @@ body {
   color: var(--text-main);
   font-weight: 500;
   word-break: break-all;
+}
+
+/* ============ 布局美化 · 顶部栏 ============ */
+
+/* 品牌 Logo：渐变方块 + 光晕 */
+.hp-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  color: #fff;
+  background: linear-gradient(135deg, #1e6fff 0%, #06b6a4 100%);
+  box-shadow:
+    0 0 0 3px rgba(30, 111, 255, 0.18),
+    0 4px 12px rgba(30, 111, 255, 0.45);
+}
+
+/* 品牌文字 */
+.hp-brand {
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.5px;
+  line-height: 1;
+}
+.hp-brand-sub {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.52);
+  letter-spacing: 0.3px;
+}
+
+/* 顶部右侧商户信息 */
+.hp-header-merchant {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.hp-header-merchant-name {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 500;
+}
+.hp-header-merchant-code {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* 退出按钮 hover 态 */
+.hp-header-logout {
+  transition: all 0.2s ease;
+}
+.hp-header-logout:hover {
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ============ 布局美化 · 侧边栏 ============ */
+
+/* 侧栏商户信息卡 */
+.hp-sider-merchant {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 12px 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(30, 111, 255, 0.18), rgba(6, 182, 164, 0.12));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
+}
+.hp-sider-merchant.is-collapsed {
+  justify-content: center;
+  padding: 10px 4px;
+}
+.hp-sider-merchant-info {
+  min-width: 0;
+  line-height: 1.3;
+}
+.hp-sider-merchant-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hp-sider-merchant-code {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 菜单分组标题 */
+.hp-sider .ant-menu-item-group-title {
+  padding: 14px 20px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.34);
+  text-transform: uppercase;
+}
+
+/* 菜单项：圆角 + 悬浮 + 选中态 */
+.hp-sider .ant-menu-item {
+  position: relative;
+  margin-inline: 10px;
+  margin-block: 3px;
+  width: calc(100% - 20px);
+  height: 40px;
+  line-height: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+.hp-sider .ant-menu-item .anticon {
+  font-size: 15px;
+}
+.hp-sider .ant-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+.hp-sider .ant-menu-item-selected {
+  background: linear-gradient(90deg, #1e6fff, #2b7bff) !important;
+  box-shadow: 0 4px 12px rgba(30, 111, 255, 0.35);
+}
+.hp-sider .ant-menu-item-selected::after {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 3px 3px 0;
+  background: #06b6a4;
+}
+.hp-sider .ant-menu-item-selected .anticon {
+  color: #fff;
+}
+
+/* 折叠态：选中指示条隐藏，图标居中 */
+.ant-layout-sider-collapsed .hp-sider .ant-menu-item-selected::after {
+  display: none;
+}
+
+/* 侧栏底部版本标识 */
+.hp-sider-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 20px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hp-sider-footer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #06b6a4;
+  box-shadow: 0 0 6px rgba(6, 182, 164, 0.8);
+  flex-shrink: 0;
+}
+
+/* 侧栏外壳：内部滚动不压滚动条 */
+.hp-sider-shell .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ 布局美化 · 页内工具栏 ============ */
+.hp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.hp-toolbar-toggle {
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-sub);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+.hp-toolbar-toggle:hover {
+  background: rgba(30, 111, 255, 0.1);
+  color: var(--brand);
+}
+.hp-toolbar-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+/* ============ 登录页 ============ */
+.hp-login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.15fr) minmax(420px, 1fr);
+}
+
+/* 品牌区 */
+.hp-login-brand {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background: linear-gradient(150deg, #0b1424 0%, #0e1a2b 45%, #12335f 100%);
+  color: #fff;
+}
+.hp-login-glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.hp-login-glow-a {
+  right: -120px;
+  top: -100px;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, rgba(30, 111, 255, 0.45), transparent 68%);
+}
+.hp-login-glow-b {
+  left: -100px;
+  bottom: -120px;
+  width: 380px;
+  height: 380px;
+  background: radial-gradient(circle, rgba(6, 182, 164, 0.32), transparent 70%);
+}
+.hp-login-brand-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 420px;
+  animation: hpFadeIn 0.4s ease-out;
+}
+.hp-logo-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  font-size: 26px;
+  margin-bottom: 20px;
+}
+.hp-logo-sm {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+.hp-login-brand-title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  line-height: 1.2;
+}
+.hp-login-brand-sub {
+  margin-top: 12px;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 0.5px;
+}
+.hp-login-trust {
+  list-style: none;
+  margin: 36px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hp-login-trust li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+}
+.hp-login-trust li .anticon {
+  font-size: 15px;
+  color: #06b6a4;
+}
+.hp-login-version {
+  display: inline-block;
+  margin-top: 44px;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+/* 表单区 */
+.hp-login-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: var(--bg-page);
+}
+.hp-login-form-card {
+  width: 100%;
+  max-width: 400px;
+  padding: 36px 34px 28px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: var(--shadow-card-hover);
+  animation: hpFadeIn 0.35s ease-out 0.05s both;
+}
+.hp-login-form-head {
+  text-align: center;
+  margin-bottom: 26px;
+}
+.hp-login-form-head .hp-logo {
+  margin-bottom: 16px;
+}
+.hp-login-form-head h2 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.hp-login-form-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+.hp-login-form-card .ant-input-affix-wrapper {
+  border-radius: 10px;
+}
+.hp-login-form-card .ant-input-prefix {
+  color: rgba(31, 42, 68, 0.35);
+  margin-right: 8px;
+}
+.hp-login-extra {
+  margin: 4px 0 18px;
+  text-align: center;
+  font-size: 12px;
+}
+.hp-login-submit.ant-btn-primary {
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  background: linear-gradient(90deg, #1e6fff 0%, #06b6a4 100%);
+  box-shadow: 0 6px 18px rgba(30, 111, 255, 0.35);
+  transition: all 0.2s ease;
+}
+.hp-login-submit.ant-btn-primary:hover {
+  background: linear-gradient(90deg, #2b7bff 0%, #12c5b2 100%);
+  box-shadow: 0 8px 22px rgba(30, 111, 255, 0.45);
+  transform: translateY(-1px);
+}
+.hp-login-submit.ant-btn-primary:active {
+  transform: translateY(0);
+}
+.hp-login-foot {
+  margin-top: 20px;
+  font-size: 12px;
+  color: rgba(31, 42, 68, 0.4);
+}
+
+/* 登录页响应式：窄屏隐藏品牌区 */
+@media (max-width: 900px) {
+  .hp-login {
+    grid-template-columns: 1fr;
+  }
+  .hp-login-brand {
+    display: none;
+  }
+  .hp-login-form {
+    min-height: 100vh;
+  }
 }

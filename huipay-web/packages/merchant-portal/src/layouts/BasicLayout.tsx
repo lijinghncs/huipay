@@ -1,8 +1,33 @@
-// 商家工作台布局
+// 商家工作台布局：深色渐变顶部栏 + 分组侧边栏 + 响应式折叠
 import React, { useState } from 'react';
-import { App as AntApp, Avatar, Breadcrumb, Button, Drawer, Grid, Layout, Menu, Space, theme } from 'antd';
+import {
+  App as AntApp,
+  Avatar,
+  Breadcrumb,
+  Button,
+  Drawer,
+  Grid,
+  Layout,
+  Menu,
+  Space,
+  Tooltip,
+  theme,
+} from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { DashboardOutlined, TransactionOutlined, QrcodeOutlined, WalletOutlined, BranchesOutlined, ShopOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MenuOutlined, LogoutOutlined, BarChartOutlined } from '@ant-design/icons';
+import {
+  BarChartOutlined,
+  BranchesOutlined,
+  DashboardOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuOutlined,
+  MenuUnfoldOutlined,
+  NodeIndexOutlined,
+  QrcodeOutlined,
+  ShopOutlined,
+  TransactionOutlined,
+  WalletOutlined,
+} from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { clearToken } from '../services/auth';
 import { getMerchantProfile } from '../services/user';
@@ -10,14 +35,29 @@ import { getMerchantProfile } from '../services/user';
 const { Sider, Content, Header } = Layout;
 const { useBreakpoint } = Grid;
 
+const MONO = { fontVariantNumeric: 'tabular-nums' as const, fontFamily: 'Fira Code, Consolas, Monaco, monospace' };
+
 const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '概览' },
-  { key: '/transactions', icon: <TransactionOutlined />, label: '交易' },
-  { key: '/transaction-stats', icon: <BarChartOutlined />, label: '交易统计' },
-  { key: '/codes', icon: <QrcodeOutlined />, label: '收款码' },
-  { key: '/stores', icon: <ShopOutlined />, label: '门店' },
-  { key: '/wallets', icon: <WalletOutlined />, label: '钱包' },
-  { key: '/split-rules', icon: <BranchesOutlined />, label: '分账规则' },
+  {
+    type: 'group' as const,
+    label: '经营',
+    children: [
+      { key: '/', icon: <DashboardOutlined />, label: '概览' },
+      { key: '/transactions', icon: <TransactionOutlined />, label: '交易' },
+      { key: '/transaction-stats', icon: <BarChartOutlined />, label: '交易统计' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '收银与资金',
+    children: [
+      { key: '/codes', icon: <QrcodeOutlined />, label: '收款码' },
+      { key: '/stores', icon: <ShopOutlined />, label: '门店' },
+      { key: '/wallets', icon: <WalletOutlined />, label: '钱包' },
+      { key: '/split-rules', icon: <BranchesOutlined />, label: '分账规则' },
+      { key: '/splits', icon: <NodeIndexOutlined />, label: '分账' },
+    ],
+  },
 ];
 
 const titleMap: Record<string, string> = {
@@ -28,18 +68,59 @@ const titleMap: Record<string, string> = {
   '/stores': '门店',
   '/wallets': '钱包',
   '/split-rules': '分账规则',
+  '/splits': '分账',
 };
 
-const MenuPanel = ({ selectedKey, onSelect }: { selectedKey: string; onSelect: (key: string) => void }) => (
-  <Menu
-    className="hp-sider"
-    mode="inline"
-    theme="dark"
-    selectedKeys={[selectedKey]}
-    items={menuItems}
-    onClick={({ key }) => onSelect(key as string)}
-    style={{ borderInlineEnd: 'none', paddingTop: 8, background: 'transparent' }}
-  />
+interface MenuPanelProps {
+  selectedKey: string;
+  collapsed?: boolean;
+  merchantName?: string;
+  merchantCode?: string;
+  onSelect: (key: string) => void;
+}
+
+const MenuPanel: React.FC<MenuPanelProps> = ({ selectedKey, collapsed, merchantName, merchantCode, onSelect }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    {/* 商户信息卡 */}
+    <div className={`hp-sider-merchant${collapsed ? ' is-collapsed' : ''}`}>
+      <Avatar
+        size={36}
+        style={{
+          background: 'linear-gradient(135deg, #1e6fff, #06b6a4)',
+          fontWeight: 700,
+          fontSize: 15,
+          flexShrink: 0,
+        }}
+      >
+        {(merchantName || '商').slice(0, 1)}
+      </Avatar>
+      {!collapsed && (
+        <div className="hp-sider-merchant-info">
+          <div className="hp-sider-merchant-name">{merchantName || '商户'}</div>
+          {merchantCode && <div className="hp-sider-merchant-code">{merchantCode}</div>}
+        </div>
+      )}
+    </div>
+
+    <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+      <Menu
+        className="hp-sider"
+        mode="inline"
+        theme="dark"
+        selectedKeys={[selectedKey]}
+        items={menuItems}
+        onClick={({ key }) => onSelect(key as string)}
+        style={{ borderInlineEnd: 'none', padding: '4px 0 12px', background: 'transparent' }}
+      />
+    </div>
+
+    {!collapsed && (
+      <div className="hp-sider-footer">
+        <span className="hp-sider-footer-dot" />
+        汇聚付商户端 v1.0.0
+      </div>
+    )}
+  </div>
 );
 
 export const BasicLayout: React.FC = () => {
@@ -62,86 +143,99 @@ export const BasicLayout: React.FC = () => {
     nav('/login', { replace: true });
   };
 
+  const toggleNav = () => (isMobile ? setDrawerOpen(true) : setCollapsed((c) => !c));
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
+      {/* 顶部栏 */}
       <Header
+        className="hp-header"
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 16px',
-          background: '#0e1a2b',
-          color: '#fff',
-          boxShadow: '0 1px 4px rgba(16,24,40,0.2)',
+          padding: '0 20px',
+          background: 'linear-gradient(90deg, #0e1a2b 0%, #152642 100%)',
+          boxShadow: '0 2px 14px rgba(14,26,43,0.32)',
           position: 'sticky',
           top: 0,
-          zIndex: 10,
+          zIndex: 100,
         }}
       >
-        <Space size={12} style={{ alignItems: 'center' }}>
-          <span
-            style={{
-              width: 30,
-              height: 30,
-              borderRadius: 9,
-              background: 'linear-gradient(135deg,#1e6fff,#06b6a4)',
-              boxShadow: '0 2px 8px rgba(30,111,255,0.45)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-            }}
-          >
-            <ShopOutlined style={{ fontSize: 16 }} />
+        <Space size={12} align="center">
+          <span className="hp-logo" aria-hidden>
+            <ShopOutlined />
           </span>
-          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0.5 }}>
+          <span className="hp-brand">
             汇聚付
-            <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: 'rgba(255,255,255,0.55)' }}>商家工作台</span>
+            <span className="hp-brand-sub">商家工作台</span>
           </span>
         </Space>
-        <Space size={12} align="center">
+
+        <Space size={14} align="center">
           {profile.data?.name && (
-            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13 }}>{profile.data.name}</span>
+            <span className="hp-header-merchant">
+              <span className="hp-header-merchant-name">{profile.data.name}</span>
+              {profile.data.entity_code && (
+                <span className="hp-header-merchant-code" style={MONO}>
+                  {profile.data.entity_code}
+                </span>
+              )}
+            </span>
           )}
-          <Avatar size={30} style={{ background: '#1e6fff' }} icon={<ShopOutlined />} />
-          <Button ghost size="small" icon={<LogoutOutlined />} onClick={logout} style={{ borderColor: 'rgba(255,255,255,0.3)' }}>
-            退出
-          </Button>
+          <Tooltip title="退出登录">
+            <Button
+              className="hp-header-logout"
+              ghost
+              size="small"
+              icon={<LogoutOutlined />}
+              onClick={logout}
+              style={{ borderColor: 'rgba(255,255,255,0.22)', color: 'rgba(255,255,255,0.82)' }}
+            >
+              退出
+            </Button>
+          </Tooltip>
         </Space>
       </Header>
 
       <Layout>
+        {/* 桌面端侧边栏 */}
         {!isMobile && (
           <Sider
-            width={200}
-            collapsedWidth={64}
+            width={216}
+            collapsedWidth={72}
             collapsed={collapsed}
             theme="dark"
+            className="hp-sider-shell"
             style={{
-              background: '#0e1a2b',
+              background: 'linear-gradient(180deg, #0e1a2b 0%, #12213a 100%)',
               boxShadow: '1px 0 0 rgba(16,24,40,0.06)',
-              display: 'flex',
-              flexDirection: 'column',
             }}
           >
-            <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-              <MenuPanel selectedKey={loc.pathname} onSelect={(k) => nav(k)} />
-            </div>
-            {!collapsed && <div className="hp-sider-footer">汇聚付商户端 v1.0.0</div>}
+            <MenuPanel
+              selectedKey={loc.pathname}
+              collapsed={collapsed}
+              merchantName={profile.data?.name}
+              merchantCode={profile.data?.entity_code}
+              onSelect={(k) => nav(k)}
+            />
           </Sider>
         )}
 
+        {/* 移动端抽屉导航 */}
         {isMobile && (
           <Drawer
             placement="left"
-            width={200}
+            width={232}
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
-            styles={{ body: { padding: 0, background: '#0e1a2b' } }}
+            styles={{ body: { padding: 0, background: 'linear-gradient(180deg, #0e1a2b 0%, #12213a 100%)' } }}
             closable={false}
           >
             <MenuPanel
               selectedKey={loc.pathname}
+              merchantName={profile.data?.name}
+              merchantCode={profile.data?.entity_code}
               onSelect={(k) => {
                 nav(k);
                 setDrawerOpen(false);
@@ -152,22 +246,15 @@ export const BasicLayout: React.FC = () => {
 
         <Layout style={{ background: token.colorBgLayout }}>
           <Content style={{ padding: isMobile ? 12 : 20 }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 16,
-              }}
-            >
+            {/* 页内工具栏：折叠 + 标题 + 面包屑 */}
+            <div className="hp-toolbar">
               <Space size={12} align="center">
-                <span
-                  onClick={() => (isMobile ? setDrawerOpen(true) : setCollapsed((c) => !c))}
-                  style={{ cursor: 'pointer', fontSize: 16, color: token.colorTextSecondary, display: 'inline-flex' }}
-                >
-                  {isMobile ? <MenuOutlined /> : collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                </span>
-                <span style={{ fontSize: 18, fontWeight: 700 }}>{currentPage}</span>
+                <Tooltip title={isMobile ? '打开菜单' : collapsed ? '展开菜单' : '收起菜单'}>
+                  <span className="hp-toolbar-toggle" onClick={toggleNav} role="button" aria-label="切换菜单">
+                    {isMobile ? <MenuOutlined /> : collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                  </span>
+                </Tooltip>
+                <span className="hp-toolbar-title">{currentPage}</span>
               </Space>
               {!isMobile && <Breadcrumb items={[{ title: '商家工作台' }, { title: currentPage }]} />}
             </div>

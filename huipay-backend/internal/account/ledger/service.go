@@ -225,9 +225,9 @@ func (s *Service) CreditFromSettlement(ctx context.Context, req *CreditFromSettl
 	})
 }
 
-// ensureWalletTx 在事务内确保主体钱包存在（创建或返回已存在）。
+// ensureWalletTx 在事务内确保主体钱包存在（创建或返回已存在），按 (entity_id, entity_type) 定位。
 func (s *Service) ensureWalletTx(ctx context.Context, tx *gorm.DB, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
-	w, err := s.walletRepo.GetByEntityTx(ctx, tx, entityID)
+	w, err := s.walletRepo.GetByEntityTypeTx(ctx, tx, entityID, string(entityType))
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func (s *Service) ensureWalletTx(ctx context.Context, tx *gorm.DB, entityID uint
 	}
 	if err := tx.WithContext(ctx).Create(m).Error; err != nil {
 		// 并发创建时唯一索引冲突 → 重新查
-		w2, _ := s.walletRepo.GetByEntity(ctx, entityID)
+		w2, _ := s.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
 		if w2 != nil {
 			return w2, nil
 		}

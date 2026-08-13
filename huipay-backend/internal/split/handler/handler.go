@@ -2,6 +2,8 @@
 package handler
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
@@ -27,8 +29,123 @@ func (h *Handler) Execute(c *gin.Context) {
 		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
 		return
 	}
+	// 商户隔离：merchant_id 一律取自登录上下文，忽略请求体，杜绝越权分账他人订单
+	req.MerchantID = c.GetUint64("merchant_id")
+	if req.MerchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
 	req.TraceID = c.GetString("trace_id")
 	resp, err := h.svc.Execute(c.Request.Context(), &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ExecuteByPeriod POST /v1/merchant/split/execute-period。
+func (h *Handler) ExecuteByPeriod(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	var req service.ExecuteByPeriodRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	resp, err := h.svc.ExecuteByPeriod(c.Request.Context(), merchantID, &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// GenerateBill POST /v1/merchant/split/bills（生成分账单，待审批）。
+func (h *Handler) GenerateBill(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	var req service.ExecuteByPeriodRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	resp, err := h.svc.GenerateBill(c.Request.Context(), merchantID, &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ListBills GET /v1/merchant/split/bills。
+func (h *Handler) ListBills(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	resp, err := h.svc.ListBills(c.Request.Context(), merchantID, page, size)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// GetBill GET /v1/merchant/split/bills/:batch_no。
+func (h *Handler) GetBill(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	batchNo := c.Param("batch_no")
+	if batchNo == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "batch_no required", 200))
+		return
+	}
+	resp, err := h.svc.GetBillDetail(c.Request.Context(), merchantID, batchNo)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ApproveBill POST /v1/merchant/split/bills/:batch_no/approve。
+func (h *Handler) ApproveBill(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	batchNo := c.Param("batch_no")
+	resp, err := h.svc.ApproveBill(c.Request.Context(), merchantID, batchNo)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// RejectBill POST /v1/merchant/split/bills/:batch_no/reject。
+func (h *Handler) RejectBill(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	batchNo := c.Param("batch_no")
+	resp, err := h.svc.RejectBill(c.Request.Context(), merchantID, batchNo)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -45,4 +162,146 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 	errs.OK(c, resp)
+}
+
+// ListExecutions GET /v1/merchant/split/executions（分页，商户隔离）。
+func (h *Handler) ListExecutions(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	resp, err := h.svc.ListExecutions(c.Request.Context(), merchantID, page, size)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// GetExecutionDetail GET /v1/merchant/split/executions/:order_no（商户隔离）。
+func (h *Handler) GetExecutionDetail(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	no := c.Param("order_no")
+	if no == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "order_no required", 200))
+		return
+	}
+	rows, err := h.svc.GetExecutionDetail(c.Request.Context(), merchantID, no)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"order_no": no, "items": rows})
+}
+
+// ListRules GET /v1/merchant/split/rules。
+func (h *Handler) ListRules(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	list, err := h.svc.ListRules(c.Request.Context(), merchantID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"items": list})
+}
+
+// CreateRule POST /v1/merchant/split/rules。
+func (h *Handler) CreateRule(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	var req service.CreateRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	r, err := h.svc.CreateRule(c.Request.Context(), merchantID, &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, r)
+}
+
+// UpdateRule PUT /v1/merchant/split/rules/:id。
+func (h *Handler) UpdateRule(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	var req service.UpdateRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	r, err := h.svc.UpdateRule(c.Request.Context(), id, merchantID, &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, r)
+}
+
+// SetRuleStatus POST /v1/merchant/split/rules/:id/status。
+func (h *Handler) SetRuleStatus(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	var req struct {
+		Status int `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	if err := h.svc.SetRuleStatus(c.Request.Context(), id, merchantID, req.Status); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"id": id, "status": req.Status})
+}
+
+// DeleteRule DELETE /v1/merchant/split/rules/:id。
+func (h *Handler) DeleteRule(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	if err := h.svc.DeleteRule(c.Request.Context(), id, merchantID); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"id": id, "deleted": true})
 }

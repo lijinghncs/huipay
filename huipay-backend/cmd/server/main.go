@@ -217,9 +217,11 @@ func main() {
 	}
 
 	ruleEngine := splitrule.NewEngine()
-	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, logger)
+	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, paymentRouter, logger)
 	splitRuleRepo := splitrepo.NewSplitRuleRepo(dbConn.Master)
-	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, accountSvc, logger)
+	splitBillRepo := splitrepo.NewSplitBillRepo(dbConn.Master)
+	splitRevenueRepo := splitrepo.NewStoreRevenueRepo(dbConn.Master)
+	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, splitBillRepo, accountSvc, splitRevenueRepo, logger)
 
 	// 门店服务
 	storeSvc := storeservice.NewService(storeRepo, logger)
@@ -281,6 +283,14 @@ func main() {
 
 		v1.POST("/split/execute", splitH.Execute)
 		v1.GET("/split/:order_no", splitH.Get)
+		v1.POST("/merchant/split/execute-period", splitH.ExecuteByPeriod)
+		v1.GET("/merchant/split/bills", splitH.ListBills)
+		v1.POST("/merchant/split/bills", splitH.GenerateBill)
+		v1.GET("/merchant/split/bills/:batch_no", splitH.GetBill)
+		v1.POST("/merchant/split/bills/:batch_no/approve", splitH.ApproveBill)
+		v1.POST("/merchant/split/bills/:batch_no/reject", splitH.RejectBill)
+		v1.GET("/merchant/split/executions", splitH.ListExecutions)
+		v1.GET("/merchant/split/executions/:order_no", splitH.GetExecutionDetail)
 
 		// 管理后台：商户进件、列表、详情、更新、状态、概览
 		v1.POST("/admin/merchants", merchantH.Onboard)
@@ -307,6 +317,13 @@ func main() {
 		v1.PUT("/merchant/stores/:id", storeH.Update)
 		v1.POST("/merchant/stores/:id/status", storeH.SetStatus)
 		v1.DELETE("/merchant/stores/:id", storeH.Delete)
+
+		// 分账规则：商户侧自助管理
+		v1.GET("/merchant/split/rules", splitH.ListRules)
+		v1.POST("/merchant/split/rules", splitH.CreateRule)
+		v1.PUT("/merchant/split/rules/:id", splitH.UpdateRule)
+		v1.POST("/merchant/split/rules/:id/status", splitH.SetRuleStatus)
+		v1.DELETE("/merchant/split/rules/:id", splitH.DeleteRule)
 
 		// 商户自助：当前商户资料与经营概览（读 X-Merchant-Id 中间件）
 		v1.GET("/merchant/profile", merchantH.SelfProfile)

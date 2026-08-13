@@ -20,14 +20,16 @@ type Condition struct {
 type Allocation struct {
 	ReceiverEntityID uint64 `json:"receiver_entity_id"`
 	ReceiverType     string `json:"receiver_type"`
-	RatioBps         int64  `json:"ratio_bps"`     // 万分比（10000 = 100%）
-	FixedAmount      int64  `json:"fixed_amount"`  // 固定金额（分），与比例互斥
+	ReceiverScope    string `json:"receiver_scope,omitempty"` // "ALL_STORES" 表示全门店分摊
+	RatioBps         int64  `json:"ratio_bps"`                // 万分比（10000 = 100%）
+	FixedAmount      int64  `json:"fixed_amount"`             // 固定金额（分），与比例互斥
 }
 
 // Rule 分账规则。
 type Rule struct {
 	ID          uint64
 	RuleCode    string
+	RuleName    string
 	MerchantID  uint64
 	Priority    int
 	Conditions  Condition

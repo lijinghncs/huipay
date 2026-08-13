@@ -2,6 +2,7 @@
 import React from 'react';
 import {
   Alert,
+  App as AntApp,
   Button,
   Card,
   DatePicker,
@@ -25,12 +26,12 @@ import {
   WechatOutlined,
   PayCircleOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { StatusTag } from '@huipay/ui-kit';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
 import type { Order, QueryResult } from '@huipay/shared';
-import { getOrder, listOrders, listStores, queryOrder } from '../../services/user';
+import { executeSplit, getOrder, listOrders, listStores, queryOrder } from '../../services/user';
 import { KpiCard } from '../../components/KpiCard';
 
 const { RangePicker } = DatePicker;
@@ -46,6 +47,7 @@ const channelIcon = (v?: string) => {
 const statusTag = (v: string) => <StatusTag status={v} />;
 
 export const Transactions: React.FC = () => {
+  const { message } = AntApp.useApp();
   const [searchParams] = useSearchParams();
   const [page, setPage] = React.useState(1);
   const [size, setSize] = React.useState(20);
@@ -126,6 +128,20 @@ export const Transactions: React.FC = () => {
       setQueryLoading(false);
     }
   };
+
+  const splitMutation = useMutation({
+    mutationFn: (order: Order) =>
+      executeSplit(order.order_no, order.paid_amount ?? order.amount, {
+        storeId: order.store_id,
+        channel: order.channel,
+        paidAt: order.paid_at,
+      }),
+    onSuccess: () => {
+      message.success('分账已执行');
+      detailQuery.refetch();
+    },
+    onError: (e: Error) => message.error(e.message || '分账执行失败，请重试'),
+  });
 
   const filterLabel = {
     status: '全部状态',
@@ -438,6 +454,15 @@ export const Transactions: React.FC = () => {
               <Button loading={queryLoading} onClick={runChannelQuery} disabled={!detail.channel}>
                 查询通道状态
               </Button>
+              {detail.status === 'PAID' && detail.split_status === 'PENDING' && (
+                <Button
+                  type="primary"
+                  loading={splitMutation.isPending}
+                  onClick={() => splitMutation.mutate(detail)}
+                >
+                  执行分账
+                </Button>
+              )}
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 仅查询，不修改本地订单；以回调结果为准
               </Typography.Text>

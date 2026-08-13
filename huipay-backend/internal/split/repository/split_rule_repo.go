@@ -34,6 +34,42 @@ type SplitRuleRepo struct{ db *gorm.DB }
 // NewSplitRuleRepo 构造 SplitRuleRepo。
 func NewSplitRuleRepo(db *gorm.DB) *SplitRuleRepo { return &SplitRuleRepo{db: db} }
 
+// Create 创建分账规则。
+func (r *SplitRuleRepo) Create(ctx context.Context, m *SplitRuleModel) error {
+	return r.db.WithContext(ctx).Create(m).Error
+}
+
+// GetByID 按 ID + 商户查询规则（商户隔离）。
+func (r *SplitRuleRepo) GetByID(ctx context.Context, id, merchantID uint64) (*SplitRuleModel, error) {
+	var row SplitRuleModel
+	if err := r.db.WithContext(ctx).Where("id = ? AND merchant_id = ?", id, merchantID).First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// Update 按 ID + 商户更新规则字段。
+func (r *SplitRuleRepo) Update(ctx context.Context, id, merchantID uint64, fields map[string]any) error {
+	return r.db.WithContext(ctx).Model(&SplitRuleModel{}).
+		Where("id = ? AND merchant_id = ?", id, merchantID).
+		Updates(fields).Error
+}
+
+// UpdateStatus 按 ID + 商户更新规则启用状态。
+func (r *SplitRuleRepo) UpdateStatus(ctx context.Context, id, merchantID uint64, status int) error {
+	return r.db.WithContext(ctx).Model(&SplitRuleModel{}).
+		Where("id = ? AND merchant_id = ?", id, merchantID).
+		Update("status", status).Error
+}
+
+// Delete 按 ID + 商户删除规则。
+func (r *SplitRuleRepo) Delete(ctx context.Context, id, merchantID uint64) error {
+	return r.db.WithContext(ctx).Where("id = ? AND merchant_id = ?", id, merchantID).Delete(&SplitRuleModel{}).Error
+}
+
 // ListByMerchant 查询商户启用中的分账规则，解析为规则引擎模型。
 func (r *SplitRuleRepo) ListByMerchant(ctx context.Context, merchantID uint64) ([]rule.Rule, error) {
 	var rows []SplitRuleModel
@@ -56,6 +92,7 @@ func (r *SplitRuleRepo) ListByMerchant(ctx context.Context, merchantID uint64) (
 		list = append(list, rule.Rule{
 			ID:          rows[i].ID,
 			RuleCode:    rows[i].RuleCode,
+			RuleName:    rows[i].RuleName,
 			MerchantID:  rows[i].MerchantID,
 			Priority:    rows[i].Priority,
 			Conditions:  conditions,
@@ -88,6 +125,7 @@ func (r *SplitRuleRepo) GetByCodeAndMerchant(ctx context.Context, ruleCode strin
 	return &rule.Rule{
 		ID:          row.ID,
 		RuleCode:    row.RuleCode,
+		RuleName:    row.RuleName,
 		MerchantID:  row.MerchantID,
 		Priority:    row.Priority,
 		Conditions:  conditions,
