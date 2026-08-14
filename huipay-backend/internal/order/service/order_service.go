@@ -188,6 +188,41 @@ func (s *Service) PrecreateByCode(ctx context.Context, req *PrecreateByCodeReque
 	})
 }
 
+// CodeInfo 码牌公开信息（H5 收银台展示）。
+type CodeInfo struct {
+	CodeID    string `json:"code_id"`
+	StoreID   uint64 `json:"store_id,omitempty"`
+	StoreName string `json:"store_name,omitempty"`
+}
+
+// GetCodeInfo 按码牌短码反查门店信息（H5 收银台顶部展示门店名称）。
+// 码牌存在即返回；未绑定门店时 store_name 为空。码牌不存在/停用返回 nil,nil。
+func (s *Service) GetCodeInfo(ctx context.Context, codeID string) (*CodeInfo, error) {
+	if s.codeRepo == nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "payment code repo not configured", 500, nil)
+	}
+	code, err := s.codeRepo.GetByCodeID(ctx, codeID)
+	if err != nil {
+		return nil, err
+	}
+	if code == nil {
+		return nil, nil
+	}
+	info := &CodeInfo{CodeID: code.CodeID}
+	if code.StoreID != nil && *code.StoreID > 0 {
+		info.StoreID = *code.StoreID
+		var store struct {
+			Name string
+		}
+		if err := s.db.WithContext(ctx).Table("t_store").
+			Select("name").Where("id = ?", *code.StoreID).Scan(&store).Error; err != nil {
+			return nil, err
+		}
+		info.StoreName = store.Name
+	}
+	return info, nil
+}
+
 // GetByOrderNo 按订单号查询。
 func (s *Service) GetByOrderNo(ctx context.Context, orderNo string) (*model.OrderModel, error) {
 	m, err := s.repo.GetByOrderNo(ctx, orderNo)

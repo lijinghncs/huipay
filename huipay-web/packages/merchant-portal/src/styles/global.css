@@ -626,3 +626,313 @@ body {
     min-height: 100vh;
   }
 }
+
+/* ============ 分账明细页 ============ */
+
+/* 页头 */
+.hp-split-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.hp-split-head-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: 0.3px;
+}
+.hp-split-head-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+/* 查询区 */
+.hp-split-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, #f7faff 0%, #edf3ff 100%);
+  border: 1px solid #e3eaf8;
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+}
+.hp-split-search .ant-input-affix-wrapper {
+  border-radius: 10px;
+}
+.hp-split-search-input input {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+}
+.hp-split-search-btn.ant-btn-primary {
+  border: none;
+  background: linear-gradient(90deg, #1e6fff 0%, #06b6a4 100%);
+  box-shadow: 0 6px 16px rgba(30, 111, 255, 0.3);
+  transition: all 0.2s ease;
+}
+.hp-split-search-btn.ant-btn-primary:hover {
+  background: linear-gradient(90deg, #2b7bff 0%, #12c5b2 100%);
+  box-shadow: 0 8px 20px rgba(30, 111, 255, 0.4);
+  transform: translateY(-1px);
+}
+.hp-split-search-btn.ant-btn-primary:active {
+  transform: translateY(0);
+}
+
+/* 批次概览 Hero */
+.hp-split-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, #0e1a2b 0%, #12335f 55%, #1e6fff 130%);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(30, 111, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  animation: hpFadeIn 0.3s ease-out;
+}
+.hp-split-hero::after {
+  content: '';
+  position: absolute;
+  right: -70px;
+  top: -90px;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 182, 164, 0.35), transparent 70%);
+  pointer-events: none;
+}
+.hp-split-hero-main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.hp-split-hero-batch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hp-split-hero-batch .hp-split-hero-batch-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 1px;
+}
+.hp-split-hero-title {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.hp-split-hero-rule {
+  margin-top: 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.hp-split-hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.hp-split-hero-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hp-split-hero-meta-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.5px;
+}
+.hp-split-hero-meta-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+.hp-split-hero-amount {
+  position: relative;
+  z-index: 1;
+  text-align: right;
+  flex-shrink: 0;
+  padding-left: 24px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+.hp-split-hero-amount-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.5px;
+}
+.hp-split-hero-amount-value {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+.hp-split-hero-amount-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 状态徽章（圆点 + 文案） */
+.hp-split-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.hp-split-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.hp-split-status--pending { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+.hp-split-status--pending .hp-split-status-dot { background: #f59e0b; }
+.hp-split-status--approved { color: #1d4ed8; background: rgba(59, 130, 246, 0.14); }
+.hp-split-status--approved .hp-split-status-dot { background: #3b82f6; }
+.hp-split-status--rejected { color: #64748b; background: rgba(100, 116, 139, 0.14); }
+.hp-split-status--rejected .hp-split-status-dot { background: #94a3b8; }
+.hp-split-status--executed { color: #047857; background: rgba(16, 185, 129, 0.14); }
+.hp-split-status--executed .hp-split-status-dot { background: #10b981; }
+.hp-split-status--other { color: #475569; background: rgba(100, 116, 139, 0.1); }
+.hp-split-status--other .hp-split-status-dot { background: #94a3b8; }
+
+/* 门店明细区块标题 */
+.hp-split-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 2px 0 14px;
+}
+.hp-split-section-title .anticon {
+  color: var(--brand);
+  font-size: 16px;
+}
+
+/* 门店单元格 */
+.hp-split-store-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hp-split-store-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #1e6fff, #06b6a4);
+  box-shadow: 0 4px 10px rgba(30, 111, 255, 0.25);
+  flex-shrink: 0;
+}
+.hp-split-store-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main);
+}
+.hp-split-store-id {
+  font-size: 12px;
+  color: #8a94a6;
+}
+
+/* 金额高亮 */
+.hp-split-amount {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-weight: 700;
+  font-size: 15px;
+  color: #e11d48;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 占比进度条 */
+.hp-split-ratio-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.hp-split-ratio-track {
+  width: 92px;
+  height: 7px;
+  border-radius: 4px;
+  background: #eef1f7;
+  overflow: hidden;
+}
+.hp-split-ratio-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #1e6fff, #06b6a4);
+}
+.hp-split-ratio-text {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5b6b81;
+  min-width: 48px;
+  text-align: left;
+}
+
+/* 订单明细按钮 */
+.hp-split-order-btn.ant-btn {
+  border-radius: 8px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.hp-split-order-btn.ant-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(30, 111, 255, 0.25);
+}
+
+/* 订单抽屉内订单号 */
+.hp-split-order-no {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 12px;
+}
+
+/* 空状态容器 */
+.hp-split-empty {
+  padding: 40px 0;
+}
+
+@media (max-width: 640px) {
+  .hp-split-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .hp-split-hero-amount {
+    text-align: left;
+    padding-left: 0;
+    border-left: none;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+  .hp-split-search {
+    flex-wrap: wrap;
+  }
+}

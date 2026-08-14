@@ -35,6 +35,7 @@ type SplitBillModel struct {
 	EndTime     time.Time      `gorm:"column:end_time;not null"`
 	TotalAmount int64          `gorm:"column:total_amount;not null"`
 	Detail      string         `gorm:"column:detail;type:json;not null"`
+	OrderNos    string         `gorm:"column:order_nos;type:json"` // 账单覆盖的订单号列表(JSON 数组)，用于排除已分账订单
 	Status      string         `gorm:"column:status;size:16;not null;default:PENDING"`
 	ApprovedAt  *time.Time     `gorm:"column:approved_at"`
 	ExecutedAt  *time.Time     `gorm:"column:executed_at"`
@@ -50,6 +51,9 @@ type SplitBillRepo struct{ db *gorm.DB }
 
 // NewSplitBillRepo 构造 SplitBillRepo。
 func NewSplitBillRepo(db *gorm.DB) *SplitBillRepo { return &SplitBillRepo{db: db} }
+
+// DB 暴露主库用于跨表查询。
+func (r *SplitBillRepo) DB() *gorm.DB { return r.db }
 
 // Create 创建分账单。
 func (r *SplitBillRepo) Create(ctx context.Context, m *SplitBillModel) error {
@@ -84,15 +88,20 @@ func (r *SplitBillRepo) ListByMerchant(ctx context.Context, merchantID uint64, o
 	return rows, total, nil
 }
 
-// UpdateStatus 更新账单状态（含审批/执行时间戳）。
-func (r *SplitBillRepo) UpdateStatus(ctx context.Context, id uint64, status string, extra map[string]any) error {
+// UpdateStatus 乐观锁更新账单状态：仅当当前为 PENDING（待审批）时才允许流转到 APPROVED/EXECUTED/REJECTED。
+// 返回 bool 表示是否实际更新（RowsAffected），false 说明账单已被并发处理，调用方应报错避免重复审批。
+func (r *SplitBillRepo) UpdateStatus(ctx context.Context, id uint64, status string, extra map[string]any) (bool, error) {
 	fields := map[string]any{"status": status}
 	for k, v := range extra {
 		fields[k] = v
 	}
-	return r.db.WithContext(ctx).Model(&SplitBillModel{}).
-		Where("id = ?", id).
-		Updates(fields).Error
+	res := r.db.WithContext(ctx).Model(&SplitBillModel{}).
+		Where("id = ? AND status = ?", id, BillPending).
+		Updates(fields)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // GetStoreNames 批量查询门店名称（t_store.id -> name）。

@@ -32,6 +32,9 @@ MYSQL_DSN="root:xxx@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&lo
 # 4. 编译 & 启动
 make build
 ./bin/huipay-server
+
+# 或者直接 go run 启动（开发期推荐）
+go run ./cmd/server
 ```
 
 ## 数据库迁移（golang-migrate）

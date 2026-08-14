@@ -9,6 +9,7 @@ import { Codes } from './pages/Codes';
 import { Wallets } from './pages/Wallets';
 import { SplitRules } from './pages/SplitRules';
 import { Splits } from './pages/Splits';
+import { SplitBills } from './pages/SplitBills';
 import { Stores } from './pages/Stores';
 import { StoreDetail } from './pages/Stores/detail';
 import { Login } from './pages/Login';
@@ -32,6 +33,7 @@ export const App: React.FC = () => {
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/split-rules" element={<SplitRules />} />
         <Route path="/splits" element={<Splits />} />
+        <Route path="/split-bills" element={<SplitBills />} />
         <Route path="/stores" element={<Stores />} />
         <Route path="/stores/:id" element={<StoreDetail />} />
       </Route>

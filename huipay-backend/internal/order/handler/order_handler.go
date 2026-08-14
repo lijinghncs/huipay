@@ -95,6 +95,26 @@ func (h *Handler) Get(c *gin.Context) {
 	errs.OK(c, m)
 }
 
+// GetCode GET /v1/checkout/code/:code_id。
+// H5 收银台按码牌短码反查门店名称（公开接口，无需鉴权）。
+func (h *Handler) GetCode(c *gin.Context) {
+	codeID := c.Param("code_id")
+	if codeID == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "code_id required", 200))
+		return
+	}
+	info, err := h.svc.GetCodeInfo(c.Request.Context(), codeID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if info == nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "payment code not found", 200))
+		return
+	}
+	errs.OK(c, info)
+}
+
 // payReqHTTP 发起支付 HTTP 请求结构。
 type payReqHTTP struct {
 	PayType string `json:"pay_type"`            // NATIVE / H5 / JSAPI

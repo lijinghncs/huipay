@@ -70,8 +70,9 @@ type RefundResponse struct {
 
 // SplitRequest 分账请求。
 type SplitRequest struct {
-	OrderNo  string
-	Receivers []Receiver
+	OrderNo      string
+	ChannelReqNo string // 通道分账幂等单号（同 (order,receiver) 重试复用，防通道侧重复分账）
+	Receivers    []Receiver
 }
 
 // Receiver 分账接收方。

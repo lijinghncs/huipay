@@ -11,18 +11,18 @@ import (
 
 // WalletModel 钱包表 GORM 模型。
 type WalletModel struct {
-	ID         uint64    `gorm:"column:id;primaryKey;autoIncrement"`
-	WalletNo   string    `gorm:"column:wallet_no;size:32;uniqueIndex:uk_wallet_no;not null"`
-	EntityID   uint64    `gorm:"column:entity_id;not null"`
-	EntityType string    `gorm:"column:entity_type;size:32;not null"`
-	Currency   string    `gorm:"column:currency;size:3;not null;default:CNY"`
-	Balance    int64     `gorm:"column:balance;not null;default:0"`
-	Frozen     int64     `gorm:"column:frozen;not null;default:0"`
-	PreFrozen  int64     `gorm:"column:pre_frozen;not null;default:0"`
-	Version    int64     `gorm:"column:version;not null;default:0"`
-	Status     int       `gorm:"column:status;not null;default:1"`
-	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	ID         uint64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	WalletNo   string    `gorm:"column:wallet_no;size:32;uniqueIndex:uk_wallet_no;not null" json:"wallet_no"`
+	EntityID   uint64    `gorm:"column:entity_id;not null" json:"entity_id"`
+	EntityType string    `gorm:"column:entity_type;size:32;not null" json:"entity_type"`
+	Currency   string    `gorm:"column:currency;size:3;not null;default:CNY" json:"currency"`
+	Balance    int64     `gorm:"column:balance;not null;default:0" json:"balance"`
+	Frozen     int64     `gorm:"column:frozen;not null;default:0" json:"frozen"`
+	PreFrozen  int64     `gorm:"column:pre_frozen;not null;default:0" json:"pre_frozen"`
+	Version    int64     `gorm:"column:version;not null;default:0" json:"version"`
+	Status     int       `gorm:"column:status;not null;default:1" json:"status"`
+	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 }
 
 // TableName 表名。

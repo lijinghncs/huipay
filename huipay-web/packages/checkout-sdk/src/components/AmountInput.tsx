@@ -1,17 +1,34 @@
 // 码牌建单金额输入组件：消费者扫码牌后输入支付金额，确认后直接建单并拉起微信支付。
 import React from 'react';
 import { App as AntApp, InputNumber } from 'antd';
-import { useMutation } from '@tanstack/react-query';
-import { post } from '@huipay/shared/api-client';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { get, post } from '@huipay/shared/api-client';
 import { invokeWechatPay } from '../utils/wechatPay';
 import { isWeixinBrowser } from '../utils/wechatOAuth';
 import type { PrecreateResponse, PayResponse } from '../types';
+
+/** 码牌公开信息（H5 收银台顶部展示门店名称）。 */
+interface CodeInfoResponse {
+  code_id: string;
+  store_id?: number;
+  store_name?: string;
+}
 
 /** 码牌建单：POST /v1/checkout/precreate-by-code。 */
 function usePrecreateByCode() {
   return useMutation<PrecreateResponse, Error, { code: string; amount: number }>({
     mutationFn: ({ code, amount }) =>
       post<PrecreateResponse>('/v1/checkout/precreate-by-code', { code_id: code, amount }),
+  });
+}
+
+/** 码牌门店信息：GET /v1/checkout/code/:code_id。 */
+function useCodeInfo(code: string) {
+  return useQuery<CodeInfoResponse | null>({
+    queryKey: ['code-info', code],
+    queryFn: () => get<CodeInfoResponse>(`/v1/checkout/code/${code}`),
+    enabled: !!code,
+    retry: false,
   });
 }
 
@@ -37,6 +54,8 @@ export const AmountInput: React.FC<{
   const [yuan, setYuan] = React.useState<number | null>(null);
   const precreate = usePrecreateByCode();
   const pay = usePayOnce();
+  const { data: codeInfo } = useCodeInfo(code);
+  const storeName = codeInfo?.store_name;
   const cents = Math.round((yuan ?? 0) * 100);
   // 小数位校验：最多 2 位（避免浮点误差，按 100 倍取整判断）
   const hasValidDecimals = yuan == null || Number.isInteger(Math.round(yuan * 1e6) / 1e4);
@@ -103,10 +122,19 @@ export const AmountInput: React.FC<{
 
   return (
     <div className="huipay-amount" style={{ minHeight: '100vh', width: '100%', maxWidth: 520 }}>
-      {/* 顶部商户标识 */}
+      {/* 顶部商户标识 + 门店名称 */}
       <header className="huipay-amount__brand">
         <span className="huipay-amount__seal">惠</span>
-        <span className="huipay-amount__brand-text">惠付 · 扫码收款</span>
+        <div className="huipay-amount__brand-info">
+          {storeName ? (
+            <>
+              <span className="huipay-amount__store-name">{storeName}</span>
+              <span className="huipay-amount__brand-text">惠付 · 扫码收款</span>
+            </>
+          ) : (
+            <span className="huipay-amount__brand-text">惠付 · 扫码收款</span>
+          )}
+        </div>
       </header>
 
       {/* 金额主视觉 */}
@@ -149,11 +177,6 @@ export const AmountInput: React.FC<{
               {v}
             </button>
           ))}
-          {yuan != null && !QUICK_AMOUNTS.includes(yuan) && (
-            <button type="button" className="huipay-amount__chip huipay-amount__chip--active" onClick={() => setYuan(null)}>
-              自定义
-            </button>
-          )}
         </div>
       </section>
 

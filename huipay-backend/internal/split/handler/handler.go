@@ -121,6 +121,47 @@ func (h *Handler) GetBill(c *gin.Context) {
 	errs.OK(c, resp)
 }
 
+// BillStores GET /v1/merchant/split/bills/:batch_no/stores（批次下的门店汇总）。
+func (h *Handler) BillStores(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	batchNo := c.Param("batch_no")
+	if batchNo == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "batch_no required", 200))
+		return
+	}
+	resp, err := h.svc.BillStoreSummary(c.Request.Context(), merchantID, batchNo)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// BillStoreOrders GET /v1/merchant/split/bills/:batch_no/stores/:store_id/orders（批次内某门店订单明细）。
+func (h *Handler) BillStoreOrders(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	batchNo := c.Param("batch_no")
+	storeID, err := strconv.ParseUint(c.Param("store_id"), 10, 64)
+	if batchNo == "" || err != nil || storeID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "batch_no/store_id invalid", 200))
+		return
+	}
+	resp, err := h.svc.BillStoreOrders(c.Request.Context(), merchantID, batchNo, storeID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
 // ApproveBill POST /v1/merchant/split/bills/:batch_no/approve。
 func (h *Handler) ApproveBill(c *gin.Context) {
 	merchantID := c.GetUint64("merchant_id")
@@ -164,7 +205,7 @@ func (h *Handler) Get(c *gin.Context) {
 	errs.OK(c, resp)
 }
 
-// ListExecutions GET /v1/merchant/split/executions（分页，商户隔离）。
+// ListExecutions GET /v1/merchant/split/executions（分页，商户隔离，支持状态/时间/规则过滤）。
 func (h *Handler) ListExecutions(c *gin.Context) {
 	merchantID := c.GetUint64("merchant_id")
 	if merchantID == 0 {
@@ -173,7 +214,54 @@ func (h *Handler) ListExecutions(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-	resp, err := h.svc.ListExecutions(c.Request.Context(), merchantID, page, size)
+	ruleID, _ := strconv.ParseUint(c.DefaultQuery("rule_id", "0"), 10, 64)
+	f := service.ExecutionFilter{
+		Status: c.Query("status"),
+		Start:  c.Query("start"),
+		End:    c.Query("end"),
+		RuleID: ruleID,
+	}
+	resp, err := h.svc.ListExecutions(c.Request.Context(), merchantID, page, size, f)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// Preview POST /v1/merchant/split/preview（分账试算，不落库）。
+func (h *Handler) Preview(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	var req service.PreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, err.Error(), 200))
+		return
+	}
+	resp, err := h.svc.Preview(c.Request.Context(), merchantID, &req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// RetryExecution POST /v1/merchant/split/executions/:order_no/retry（重试失败/部分失败分账）。
+func (h *Handler) RetryExecution(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	no := c.Param("order_no")
+	if no == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "order_no required", 200))
+		return
+	}
+	resp, err := h.svc.RetryExecution(c.Request.Context(), merchantID, no)
 	if err != nil {
 		_ = c.Error(err)
 		return

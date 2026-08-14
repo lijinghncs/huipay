@@ -18,6 +18,7 @@ import {
   BarChartOutlined,
   BranchesOutlined,
   DashboardOutlined,
+  FileTextOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuOutlined,
@@ -43,7 +44,7 @@ const menuItems = [
     label: '经营',
     children: [
       { key: '/', icon: <DashboardOutlined />, label: '概览' },
-      { key: '/transactions', icon: <TransactionOutlined />, label: '交易' },
+      { key: '/transactions', icon: <TransactionOutlined />, label: '交易明细' },
       { key: '/transaction-stats', icon: <BarChartOutlined />, label: '交易统计' },
     ],
   },
@@ -55,20 +56,22 @@ const menuItems = [
       { key: '/stores', icon: <ShopOutlined />, label: '门店' },
       { key: '/wallets', icon: <WalletOutlined />, label: '钱包' },
       { key: '/split-rules', icon: <BranchesOutlined />, label: '分账规则' },
-      { key: '/splits', icon: <NodeIndexOutlined />, label: '分账' },
+      { key: '/split-bills', icon: <FileTextOutlined />, label: '分账单' },
+      { key: '/splits', icon: <NodeIndexOutlined />, label: '分账明细' },
     ],
   },
 ];
 
 const titleMap: Record<string, string> = {
   '/': '概览',
-  '/transactions': '交易',
+  '/transactions': '交易明细',
   '/transaction-stats': '交易统计',
   '/codes': '收款码',
   '/stores': '门店',
   '/wallets': '钱包',
   '/split-rules': '分账规则',
-  '/splits': '分账',
+  '/split-bills': '分账单',
+  '/splits': '分账明细',
 };
 
 interface MenuPanelProps {

@@ -320,6 +320,8 @@ export async function executeSplit(
 export interface SplitExecutionSummary {
   order_no: string;
   merchant_name?: string;
+  rule_id?: number;
+  rule_name?: string;
   total_amount: number; // 分账总额（分）
   receiver_count: number;
   status: 'SUCCESS' | 'PARTIAL' | 'FAILED';
@@ -348,13 +350,27 @@ export interface SplitExecutionDetail {
 }
 
 /** 分页查询当前商户分账记录。 */
-export async function listSplitExecutions(opts: { page: number; size: number }): Promise<SplitExecutionPage> {
+export async function listSplitExecutions(opts: {
+  page: number;
+  size: number;
+  status?: string;
+  start?: string;
+  end?: string;
+  rule_id?: number;
+}): Promise<SplitExecutionPage> {
   return get<SplitExecutionPage>('/v1/merchant/split/executions', { params: opts });
 }
 
 /** 查询某订单分账明细。 */
 export async function getSplitExecutionDetail(orderNo: string): Promise<{ order_no: string; items: SplitExecutionDetail[] }> {
   return get<{ order_no: string; items: SplitExecutionDetail[] }>(`/v1/merchant/split/executions/${orderNo}`);
+}
+
+/** 重试失败/部分失败的订单分账。 */
+export async function retrySplitExecution(orderNo: string): Promise<{ order_no: string; success: number; failed: number; retried: number }> {
+  return post<{ order_no: string; success: number; failed: number; retried: number }>(
+    `/v1/merchant/split/executions/${orderNo}/retry`,
+  );
 }
 
 /** 按时间段分账请求参数。 */
@@ -416,6 +432,54 @@ export async function getSplitBill(batchNo: string): Promise<SplitBill> {
   return get<SplitBill>(`/v1/merchant/split/bills/${batchNo}`);
 }
 
+/** 批次内门店汇总行。 */
+export interface BillStoreItem {
+  store_id: number;
+  store_name: string;
+  amount: number;
+  ratio: string; // 占比百分比（两位小数）
+}
+
+/** 批次门店汇总。 */
+export interface BillStoreSummary {
+  batch_no: string;
+  rule_code: string;
+  rule_name: string;
+  start_time: string;
+  end_time: string;
+  total_amount: number;
+  status: string;
+  stores: BillStoreItem[];
+}
+
+/** 批次内某门店的订单行。 */
+export interface BillStoreOrder {
+  order_no: string;
+  amount: number;
+  status: string;
+  paid_at?: string | null;
+}
+
+/** 批次内某门店订单明细。 */
+export interface BillStoreOrders {
+  batch_no: string;
+  store_id: number;
+  store_name: string;
+  orders: BillStoreOrder[];
+}
+
+/** 查询某分账批次号下的门店汇总。 */
+export async function getBillStores(batchNo: string): Promise<BillStoreSummary> {
+  return get<BillStoreSummary>(`/v1/merchant/split/bills/${encodeURIComponent(batchNo)}/stores`);
+}
+
+/** 查询某分账批次号下某门店的订单交易明细。 */
+export async function getBillStoreOrders(batchNo: string, storeId: number): Promise<BillStoreOrders> {
+  return get<BillStoreOrders>(
+    `/v1/merchant/split/bills/${encodeURIComponent(batchNo)}/stores/${storeId}/orders`,
+  );
+}
+
 /** 审批通过分账单并执行。 */
 export async function approveSplitBill(batchNo: string): Promise<SplitBill> {
   return post<SplitBill>(`/v1/merchant/split/bills/${batchNo}/approve`);
@@ -424,4 +488,38 @@ export async function approveSplitBill(batchNo: string): Promise<SplitBill> {
 /** 驳回分账单。 */
 export async function rejectSplitBill(batchNo: string): Promise<SplitBill> {
   return post<SplitBill>(`/v1/merchant/split/bills/${batchNo}/reject`);
+}
+
+/** 分账试算明细行。 */
+export interface SplitPreviewItem {
+  receiver_entity_id: number;
+  receiver_type: string;
+  receiver_name: string;
+  amount: number;
+  ratio: number; // 万分比
+}
+
+/** 分账试算结果。 */
+export interface SplitPreview {
+  rule_code: string;
+  rule_name: string;
+  mode: 'amount' | 'period';
+  total_amount: number;
+  items: SplitPreviewItem[];
+  merchant_remain: number; // 未分配归商户金额（分）
+}
+
+/** 分账试算请求（amount 单笔试算 或 start/end 时间段预览，二选一）。 */
+export interface SplitPreviewRequest {
+  rule_code: string;
+  amount?: number;
+  start?: string;
+  end?: string;
+  store_ids?: number[];
+  channel?: string;
+}
+
+/** 分账试算（不落库）。 */
+export async function previewSplit(data: SplitPreviewRequest): Promise<SplitPreview> {
+  return post<SplitPreview>('/v1/merchant/split/preview', data);
 }

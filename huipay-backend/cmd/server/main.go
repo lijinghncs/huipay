@@ -60,6 +60,7 @@ import (
 	splitservice "github.com/huipay/huipay-backend/internal/split/service"
 	splitrule "github.com/huipay/huipay-backend/internal/split/rule"
 	splitexec "github.com/huipay/huipay-backend/internal/split/executor"
+	splitsched "github.com/huipay/huipay-backend/internal/split/scheduler"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
 )
 
@@ -217,11 +218,13 @@ func main() {
 	}
 
 	ruleEngine := splitrule.NewEngine()
-	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, paymentRouter, logger)
+	splitOrderStatusRepo := splitrepo.NewSplitOrderStatusRepo(dbConn.Master)
+	splitAuditRepo := splitrepo.NewSplitAuditRepo(dbConn.Master)
+	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, splitOrderStatusRepo, paymentRouter, logger)
 	splitRuleRepo := splitrepo.NewSplitRuleRepo(dbConn.Master)
 	splitBillRepo := splitrepo.NewSplitBillRepo(dbConn.Master)
 	splitRevenueRepo := splitrepo.NewStoreRevenueRepo(dbConn.Master)
-	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, splitBillRepo, accountSvc, splitRevenueRepo, logger)
+	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, splitBillRepo, splitAuditRepo, accountSvc, splitRevenueRepo, logger)
 
 	// 门店服务
 	storeSvc := storeservice.NewService(storeRepo, logger)
@@ -261,6 +264,7 @@ func main() {
 		v1.GET("/checkout/list", orderH.List)
 		v1.GET("/checkout/stats", orderH.Stats)
 		v1.POST("/checkout/embed-info", orderH.EmbedInfo)
+		v1.GET("/checkout/code/:code_id", orderH.GetCode)
 		v1.GET("/checkout/:order_no", orderH.Get)
 		v1.GET("/checkout/:order_no/query", orderH.Query)
 		v1.POST("/checkout/:order_no/refund", orderH.Refund)
@@ -284,13 +288,17 @@ func main() {
 		v1.POST("/split/execute", splitH.Execute)
 		v1.GET("/split/:order_no", splitH.Get)
 		v1.POST("/merchant/split/execute-period", splitH.ExecuteByPeriod)
+		v1.POST("/merchant/split/preview", splitH.Preview)
 		v1.GET("/merchant/split/bills", splitH.ListBills)
 		v1.POST("/merchant/split/bills", splitH.GenerateBill)
 		v1.GET("/merchant/split/bills/:batch_no", splitH.GetBill)
+		v1.GET("/merchant/split/bills/:batch_no/stores", splitH.BillStores)
+		v1.GET("/merchant/split/bills/:batch_no/stores/:store_id/orders", splitH.BillStoreOrders)
 		v1.POST("/merchant/split/bills/:batch_no/approve", splitH.ApproveBill)
 		v1.POST("/merchant/split/bills/:batch_no/reject", splitH.RejectBill)
 		v1.GET("/merchant/split/executions", splitH.ListExecutions)
 		v1.GET("/merchant/split/executions/:order_no", splitH.GetExecutionDetail)
+		v1.POST("/merchant/split/executions/:order_no/retry", splitH.RetryExecution)
 
 		// 管理后台：商户进件、列表、详情、更新、状态、概览
 		v1.POST("/admin/merchants", merchantH.Onboard)
@@ -335,13 +343,15 @@ func main() {
 	})
 	r.GET("/metrics", prom.Handler())
 
-	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账）
+	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账 + 分账补偿）
 	if dbConn.Master != nil {
 		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, wxManager, 30*time.Second, logger).Start(context.Background())
 		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
 		if billDownloader != nil {
 			go reconcilesched.StartDailyReconcile(context.Background(), billDownloader, dbConn.Master, logger)
 		}
+		// 分账补偿调度：悬挂检测 + 失败/部分失败订单自动重入（30s 轮询）
+		go splitsched.NewCompensateScheduler(splitOrderStatusRepo, splitExec, accountSvc, logger).Start(context.Background(), 30*time.Second)
 	}
 
 	// 9. 启动服务并优雅退出

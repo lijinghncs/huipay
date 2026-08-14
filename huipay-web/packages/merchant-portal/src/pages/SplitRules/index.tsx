@@ -27,6 +27,7 @@ import {
 import {
   BranchesOutlined,
   CheckCircleOutlined,
+  CalculatorOutlined,
   DeleteOutlined,
   EnvironmentOutlined,
   MinusCircleOutlined,
@@ -36,14 +37,17 @@ import {
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KpiCard } from '../../components/KpiCard';
+import { SplitPreview } from '../../components/SplitPreview';
 import { StorePicker } from '../../components/StorePicker';
 import {
   createSplitRule,
   deleteSplitRule,
   listSplitRules,
   listStores,
+  previewSplit,
   setSplitRuleStatus,
   updateSplitRule,
+  type SplitPreview as SplitPreviewData,
   type SplitRule,
   type SplitRuleAllocation,
   type Store,
@@ -105,6 +109,10 @@ export const SplitRules: React.FC = () => {
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<SplitRule | null>(null);
   const [configRule, setConfigRule] = React.useState<SplitRule | null>(null);
+  const [trialRule, setTrialRule] = React.useState<SplitRule | null>(null);
+  const [trialPreview, setTrialPreview] = React.useState<SplitPreviewData | null>(null);
+  const [trialOpen, setTrialOpen] = React.useState(false);
+  const [trialForm] = Form.useForm<{ amount: number; store_ids?: number[]; channel?: string }>();
   const [form] = Form.useForm<RuleForm>();
 
   const listQuery = useQuery({ queryKey: ['split-rules'], queryFn: () => listSplitRules() });
@@ -170,6 +178,32 @@ export const SplitRules: React.FC = () => {
     },
     onError: () => message.error('删除失败，请重试'),
   });
+
+  const trialMutation = useMutation({
+    mutationFn: (v: { rule_code: string; amount: number; store_ids?: number[]; channel?: string }) =>
+      previewSplit({ rule_code: v.rule_code, amount: v.amount, store_ids: v.store_ids, channel: v.channel }),
+    onSuccess: (data) => setTrialPreview(data),
+    onError: (e: Error) => message.error(e.message || '试算失败，请重试'),
+  });
+
+  const openTrial = (r: SplitRule) => {
+    setTrialRule(r);
+    setTrialPreview(null);
+    trialForm.resetFields();
+    setTrialOpen(true);
+  };
+
+  const submitTrial = () => {
+    trialForm.validateFields().then((v) => {
+      if (!trialRule) return;
+      trialMutation.mutate({
+        rule_code: trialRule.rule_code,
+        amount: Math.round(v.amount * 100),
+        store_ids: (v.store_ids ?? []).length ? v.store_ids : undefined,
+        channel: v.channel || undefined,
+      });
+    });
+  };
 
   const rules = listQuery.data?.items ?? [];
   const activeCount = rules.filter((r) => r.status === 1).length;
@@ -300,7 +334,7 @@ export const SplitRules: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      width: 300,
+      width: 340,
       render: (_: unknown, r: SplitRule) => (
         <Space size={4}>
           <Switch
@@ -313,6 +347,9 @@ export const SplitRules: React.FC = () => {
           />
           <Button size="small" type="text" icon={<EnvironmentOutlined />} onClick={() => setConfigRule(r)}>
             门店配置
+          </Button>
+          <Button size="small" onClick={() => openTrial(r)}>
+            试算
           </Button>
           <Button size="small" type="text" onClick={() => openEdit(r)}>
             编辑
@@ -551,6 +588,72 @@ export const SplitRules: React.FC = () => {
           onSaved={invalidate}
         />
       )}
+
+      <Modal
+        title={
+          <Space>
+            <CalculatorOutlined />
+            <span>分账试算</span>
+            {trialRule && <Tag style={{ borderRadius: 8 }} color="blue">{trialRule.rule_name}</Tag>}
+          </Space>
+        }
+        open={trialOpen}
+        onCancel={() => setTrialOpen(false)}
+        width={560}
+        footer={
+          <Space>
+            <Button onClick={() => setTrialOpen(false)}>关闭</Button>
+            <Button type="primary" loading={trialMutation.isPending} onClick={submitTrial}>
+              试算
+            </Button>
+          </Space>
+        }
+      >
+        <Form form={trialForm} layout="vertical">
+          <Form.Item
+            name="amount"
+            label="试算金额（元）"
+            rules={[
+              { required: true, message: '请输入试算金额' },
+              {
+                validator: (_, v) =>
+                  v > 0 && v <= 50000 ? Promise.resolve() : Promise.reject(new Error('金额需在 0.01 ~ 50000 之间')),
+              },
+            ]}
+          >
+            <InputNumber min={0} max={50000} precision={2} style={{ width: '100%' }} placeholder="如：100.00" />
+          </Form.Item>
+          <Form.Item name="store_ids" label="参与门店" extra="留空表示全部门店">
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="全部门店"
+              options={storeOptions}
+              maxTagCount="responsive"
+            />
+          </Form.Item>
+          <Form.Item name="channel" label="支付渠道" extra="留空表示不限渠道">
+            <Select
+              allowClear
+              placeholder="不限渠道"
+              options={[
+                { value: 'WECHAT', label: '微信支付' },
+                { value: 'ALIPAY', label: '支付宝' },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+        {trialPreview && (
+          <SplitPreview
+            items={trialPreview.items}
+            totalAmount={trialPreview.total_amount}
+            merchantRemain={trialPreview.merchant_remain}
+            loading={trialMutation.isPending}
+          />
+        )}
+      </Modal>
     </div>
   );
 };

@@ -1,244 +1,337 @@
-// 分账记录页：分页查看每次分账（按订单聚合），查看明细展示各接收方分成金额
+// 分账明细页：输入分账批次号，查询该批次下的门店明细；点击门店查看该门店在本批次的订单交易明细
 import React from 'react';
-import { App as AntApp, Button, Card, Drawer, Descriptions, Empty, Space, Table, Tag, Typography } from 'antd';
-import { BranchesOutlined, EyeOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Card, Drawer, Empty, Input, Space, Table, Typography } from 'antd';
+import { BranchesOutlined, ReloadOutlined, SearchOutlined, ShopOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { useQuery } from '@tanstack/react-query';
-import { StatusTag } from '@huipay/ui-kit';
+import { useSearchParams } from 'react-router-dom';
 import { formatCents, formatDateTime } from '@huipay/shared/utils';
-import {
-  getSplitExecutionDetail,
-  listSplitExecutions,
-  type SplitExecutionDetail,
-  type SplitExecutionSummary,
-} from '../../services/user';
+import { getBillStoreOrders, getBillStores, type BillStoreItem, type BillStoreOrder } from '../../services/user';
 
 const { Text } = Typography;
 
-const channelLabel: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝' };
-
-const receiverTypeLabel: Record<string, string> = {
-  STORE: '门店',
-  MERCHANT: '商户',
-  PROMOTER: '推广员',
-  PLATFORM: '平台',
-  ISV: '服务商',
+/** 状态徽章：圆点 + 文案。 */
+const BillStatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const map: Record<string, { text: string; cls: string }> = {
+    PENDING: { text: '待审批', cls: 'hp-split-status--pending' },
+    APPROVED: { text: '已通过', cls: 'hp-split-status--approved' },
+    REJECTED: { text: '已驳回', cls: 'hp-split-status--rejected' },
+    EXECUTED: { text: '已执行', cls: 'hp-split-status--executed' },
+  };
+  const item = map[status] ?? { text: status, cls: 'hp-split-status--other' };
+  return (
+    <span className={`hp-split-status ${item.cls}`}>
+      <span className="hp-split-status-dot" />
+      {item.text}
+    </span>
+  );
 };
 
-/** 分账记录聚合状态标签（成功 / 部分失败 / 失败）。 */
-const splitStatusTag = (v: string) => {
-  if (v === 'SUCCESS') return <Tag color="success" style={{ borderRadius: 10 }}>成功</Tag>;
-  if (v === 'PARTIAL') return <Tag color="warning" style={{ borderRadius: 10 }}>部分失败</Tag>;
-  if (v === 'FAILED') return <Tag color="error" style={{ borderRadius: 10 }}>失败</Tag>;
-  return <Tag style={{ borderRadius: 10 }}>{v}</Tag>;
+/** 订单状态标签。 */
+const OrderStatusLabel: React.FC<{ status: string }> = ({ status }) => {
+  const map: Record<string, { text: string; color: string; bg: string }> = {
+    PAID: { text: '已支付', color: '#047857', bg: 'rgba(16,185,129,0.14)' },
+    CREATED: { text: '待支付', color: '#1d4ed8', bg: 'rgba(59,130,246,0.14)' },
+    CLOSED: { text: '已关闭', color: '#64748b', bg: 'rgba(100,116,139,0.14)' },
+    REFUNDED: { text: '已退款', color: '#b91c1c', bg: 'rgba(239,68,68,0.14)' },
+  };
+  const item = map[status] ?? { text: status, color: '#475569', bg: 'rgba(100,116,139,0.1)' };
+  return (
+    <span
+      className="hp-split-status hp-split-status--other"
+      style={{ color: item.color, background: item.bg }}
+    >
+      {item.text}
+    </span>
+  );
+};
+
+const fmtPeriod = (s: string, e: string) => {
+  const sameYear = dayjs(s).isSame(dayjs(e), 'year');
+  const fmt = sameYear ? 'MM-DD HH:mm' : 'YYYY-MM-DD HH:mm';
+  return `${dayjs(s).format(fmt)} ~ ${dayjs(e).format(fmt)}`;
 };
 
 export const Splits: React.FC = () => {
   const { message } = AntApp.useApp();
-  const [page, setPage] = React.useState(1);
-  const [size, setSize] = React.useState(20);
-  const [detailOrderNo, setDetailOrderNo] = React.useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlBatch = (searchParams.get('batch_no') ?? '').trim();
+  const [batchNo, setBatchNo] = React.useState(urlBatch);
+  const [orderStore, setOrderStore] = React.useState<{ batchNo: string; storeId: number } | null>(null);
 
-  const listQuery = useQuery({
-    queryKey: ['split-executions', page, size],
-    queryFn: () => listSplitExecutions({ page, size }),
+  // URL 携带批次号（从分账单详情跳转）时，同步输入框并自动查询
+  React.useEffect(() => {
+    setBatchNo(urlBatch);
+  }, [urlBatch]);
+
+  const searchedBatch = urlBatch || null;
+
+  const summaryQuery = useQuery({
+    queryKey: ['split-bill-stores', searchedBatch],
+    queryFn: () => getBillStores(searchedBatch!),
+    enabled: !!searchedBatch,
   });
 
-  const detailQuery = useQuery({
-    queryKey: ['split-execution-detail', detailOrderNo],
-    queryFn: () => getSplitExecutionDetail(detailOrderNo!),
-    enabled: !!detailOrderNo,
+  const ordersQuery = useQuery({
+    queryKey: ['split-bill-store-orders', orderStore?.batchNo, orderStore?.storeId],
+    queryFn: () => getBillStoreOrders(orderStore!.batchNo, orderStore!.storeId),
+    enabled: !!orderStore,
   });
 
-  const openDetail = (orderNo: string) => setDetailOrderNo(orderNo);
-  const closeDetail = () => setDetailOrderNo(null);
+  const summary = summaryQuery.data;
 
-  const detailItems = detailQuery.data?.items ?? [];
-  const detailTotal = detailItems.reduce((s, d) => s + d.amount, 0);
+  const handleSearch = () => {
+    const v = batchNo.trim();
+    if (!v) {
+      message.warning('请输入分账批次号');
+      return;
+    }
+    setOrderStore(null);
+    setSearchParams({ batch_no: v }, { replace: true });
+  };
 
-  const columns = [
-    {
-      title: '订单号',
-      dataIndex: 'order_no',
-      key: 'order_no',
-      width: 200,
-      render: (v: string) => (
-        <Typography.Text code style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}>
-          {v}
-        </Typography.Text>
-      ),
-    },
-    {
-      title: '商户',
-      dataIndex: 'merchant_name',
-      key: 'merchant_name',
-      width: 140,
-      render: (v?: string) => (v ? <span style={{ fontSize: 13 }}>{v}</span> : <Text type="secondary">-</Text>),
-    },
-    {
-      title: '分账总额',
-      dataIndex: 'total_amount',
-      key: 'total_amount',
-      align: 'right' as const,
-      width: 120,
-      render: (v: number) => <span style={{ fontWeight: 600 }}>{formatCents(v)}</span>,
-    },
-    {
-      title: '接收方数',
-      dataIndex: 'receiver_count',
-      key: 'receiver_count',
-      width: 90,
-      render: (v: number) => <span style={{ fontSize: 13 }}>{v}</span>,
-    },
-    {
-      title: '通道',
-      dataIndex: 'channel',
-      key: 'channel',
-      width: 100,
-      render: (v?: string) => (v ? channelLabel[v] ?? v : '-'),
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      render: splitStatusTag,
-    },
-    {
-      title: '执行时间',
-      dataIndex: 'executed_at',
-      key: 'executed_at',
-      width: 170,
-      render: (v?: string) => (v ? <span style={{ color: '#5b6b81', fontSize: 13 }}>{formatDateTime(v)}</span> : '-'),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 100,
-      render: (_: unknown, r: SplitExecutionSummary) => (
-        <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => openDetail(r.order_no)}>
-          查看明细
-        </Button>
-      ),
-    },
-  ];
+  const handleReset = () => {
+    setBatchNo('');
+    setOrderStore(null);
+    setSearchParams({}, { replace: true });
+  };
+
+  const openOrders = (s: BillStoreItem) => {
+    if (!searchedBatch) return;
+    setOrderStore({ batchNo: searchedBatch, storeId: s.store_id });
+  };
+  const closeOrders = () => setOrderStore(null);
+
+  const orders = ordersQuery.data;
 
   return (
-    <div className="hp-page" style={{ maxWidth: 1180 }}>
-      <Card
-        title={
-          <Space>
-            <span>分账记录</span>
-            <Tag style={{ borderRadius: 10 }} color="blue">{listQuery.data?.total ?? 0}</Tag>
-          </Space>
-        }
-      >
-        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          仅展示已执行分账的订单；点击「查看明细」可查看该次分账给各门店/接收方分成的金额。
-        </Text>
-        <Table<SplitExecutionSummary>
-          className="hp-zebra"
-          rowKey="order_no"
-          columns={columns}
-          dataSource={listQuery.data?.items ?? []}
-          loading={listQuery.isLoading}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={<Typography.Text type="secondary">暂无分账记录</Typography.Text>}
-              />
-            ),
-          }}
-          pagination={{
-            current: page,
-            pageSize: size,
-            total: listQuery.data?.total ?? 0,
-            showSizeChanger: true,
-            showTotal: (t) => <span style={{ color: '#8a94a6' }}>共 {t} 条</span>,
-            onChange: (p, s) => {
-              setPage(p);
-              setSize(s);
-            },
-          }}
-        />
-      </Card>
+    <div className="hp-page">
+      {/* 页头 */}
+      <div className="hp-split-head">
+        <div>
+          <div className="hp-split-head-title">分账明细</div>
+          <div className="hp-split-head-sub">按分账批次号查看门店分成，追踪对应订单交易</div>
+        </div>
+      </div>
 
+      {/* 查询区 */}
+      <div className="hp-split-search">
+        <Input
+          className="hp-split-search-input"
+          prefix={<SearchOutlined style={{ color: '#8a94a6' }} />}
+          placeholder="请输入分账批次号，如 SP5-1786636800-1786693800"
+          value={batchNo}
+          onChange={(e) => setBatchNo(e.target.value)}
+          onPressEnter={handleSearch}
+          allowClear
+        />
+        <Button
+          className="hp-split-search-btn"
+          type="primary"
+          icon={<SearchOutlined />}
+          onClick={handleSearch}
+          loading={summaryQuery.isFetching}
+        >
+          查询
+        </Button>
+        <Button icon={<ReloadOutlined />} onClick={handleReset}>
+          重置
+        </Button>
+      </div>
+
+      {summaryQuery.isLoading ? (
+        <Card>
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <BranchesOutlined spin style={{ fontSize: 28, color: '#1e6fff' }} />
+            <div style={{ marginTop: 12, color: '#66718b' }}>正在查询批次门店明细…</div>
+          </div>
+        </Card>
+      ) : summaryQuery.isError ? (
+        <Card>
+          <div className="hp-split-empty">
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="查询失败，请核对批次号后重试" />
+          </div>
+        </Card>
+      ) : summary ? (
+        <>
+          {/* 批次概览 Hero */}
+          <div className="hp-split-hero">
+            <div className="hp-split-hero-main">
+              <div className="hp-split-hero-batch">
+                <span className="hp-split-hero-batch-label">批次号</span>
+                <span className="hp-split-hero-title">{summary.batch_no}</span>
+                <BillStatusBadge status={summary.status} />
+              </div>
+              <div className="hp-split-hero-rule">
+                {summary.rule_name} · {summary.rule_code}
+              </div>
+              <div className="hp-split-hero-meta">
+                <div className="hp-split-hero-meta-item">
+                  <span className="hp-split-hero-meta-label">时间段</span>
+                  <span className="hp-split-hero-meta-value">{fmtPeriod(summary.start_time, summary.end_time)}</span>
+                </div>
+                <div className="hp-split-hero-meta-item">
+                  <span className="hp-split-hero-meta-label">参与门店</span>
+                  <span className="hp-split-hero-meta-value">{summary.stores.length} 家</span>
+                </div>
+              </div>
+            </div>
+            <div className="hp-split-hero-amount">
+              <div className="hp-split-hero-amount-label">分账总额</div>
+              <div className="hp-split-hero-amount-value">{formatCents(summary.total_amount)}</div>
+              <div className="hp-split-hero-amount-sub">按规则分配给各门店</div>
+            </div>
+          </div>
+
+          {/* 门店明细 */}
+          <Card style={{ borderRadius: 14 }}>
+            <div className="hp-split-section-title">
+              <ShopOutlined />
+              <span>门店明细</span>
+            </div>
+            {summary.stores.length === 0 ? (
+              <div className="hp-split-empty">
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该批次无门店明细" />
+              </div>
+            ) : (
+              <Table<BillStoreItem>
+                className="hp-zebra"
+                rowKey="store_id"
+                dataSource={summary.stores}
+                pagination={false}
+                columns={[
+                  {
+                    title: '门店',
+                    key: 'store',
+                    render: (_: unknown, r: BillStoreItem) => (
+                      <div className="hp-split-store-cell">
+                        <div className="hp-split-store-avatar">{(r.store_name || '门').slice(0, 1)}</div>
+                        <div>
+                          <div className="hp-split-store-name">{r.store_name || `门店 #${r.store_id}`}</div>
+                          <div className="hp-split-store-id">门店 #{r.store_id}</div>
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '可分金额',
+                    dataIndex: 'amount',
+                    key: 'amount',
+                    align: 'right' as const,
+                    render: (v: number) => <span className="hp-split-amount">{formatCents(v)}</span>,
+                  },
+                  {
+                    title: '占比',
+                    key: 'ratio',
+                    align: 'right' as const,
+                    width: 200,
+                    render: (_: unknown, r: BillStoreItem) => {
+                      const pct = r.ratio ? Number(r.ratio) : 0;
+                      return (
+                        <div className="hp-split-ratio-cell">
+                          <div className="hp-split-ratio-track">
+                            <div className="hp-split-ratio-fill" style={{ width: `${Math.min(pct, 100)}%` }} />
+                          </div>
+                          <span className="hp-split-ratio-text">{r.ratio ? `${r.ratio}%` : '-'}</span>
+                        </div>
+                      );
+                    },
+                  },
+                  {
+                    title: '操作',
+                    key: 'actions',
+                    width: 110,
+                    align: 'right' as const,
+                    render: (_: unknown, r: BillStoreItem) => (
+                      <Button
+                        className="hp-split-order-btn"
+                        size="small"
+                        type="link"
+                        icon={<SearchOutlined />}
+                        onClick={() => openOrders(r)}
+                      >
+                        订单明细
+                      </Button>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </>
+      ) : (
+        <Card>
+          <div className="hp-split-empty">
+            <Empty
+              image="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=minimal%20flat%20illustration%20of%20two%20shopping%20storefronts%20with%20coins%20and%20split%20arrows%2C%20soft%20blue%20and%20teal%20palette%2C%20light%20background&image_size=square"
+              description="输入分账批次号，查询该批次下的门店分成明细"
+            />
+          </div>
+        </Card>
+      )}
+
+      {/* 订单明细抽屉 */}
       <Drawer
         title={
           <Space>
             <BranchesOutlined />
-            <span>分账明细</span>
-            {detailOrderNo && (
-              <Typography.Text code style={{ fontSize: 12 }}>{detailOrderNo}</Typography.Text>
-            )}
+            <span>{orders?.store_name ?? '门店'} · 批次订单明细</span>
+            {orderStore && <Typography.Text code style={{ fontSize: 12 }}>{orderStore.batchNo}</Typography.Text>}
           </Space>
         }
-        width={560}
-        open={!!detailOrderNo}
-        onClose={closeDetail}
+        width={600}
+        open={!!orderStore}
+        onClose={closeOrders}
       >
-        {detailQuery.isLoading ? (
-          <div style={{ textAlign: 'center', padding: 32 }}>加载中…</div>
-        ) : detailItems.length === 0 ? (
-          <Empty description="无分账明细" />
-        ) : (
-          <>
-            <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="分账总额">
-                <span style={{ fontWeight: 600 }}>{formatCents(detailTotal)}</span>
-              </Descriptions.Item>
-              <Descriptions.Item label="接收方数">{detailItems.length}</Descriptions.Item>
-            </Descriptions>
-            <Table<SplitExecutionDetail>
-              rowKey={(r) => `${r.receiver_entity_id}-${r.level}`}
-              size="small"
-              pagination={false}
-              dataSource={detailItems}
-              columns={[
-                {
-                  title: '接收方',
-                  dataIndex: 'receiver_name',
-                  key: 'receiver_name',
-                  render: (v: string, r) => (
-                    <Space direction="vertical" size={0}>
-                      <span style={{ fontWeight: 600 }}>{v}</span>
-                      <span style={{ fontSize: 12, color: '#8a94a6' }}>
-                        {receiverTypeLabel[r.receiver_type] ?? r.receiver_type} #{r.receiver_entity_id}
-                      </span>
-                    </Space>
+        {ordersQuery.isLoading ? (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <BranchesOutlined spin style={{ fontSize: 24, color: '#1e6fff' }} />
+            <div style={{ marginTop: 12, color: '#66718b' }}>加载订单明细…</div>
+          </div>
+        ) : orders && orders.orders.length === 0 ? (
+          <Empty description="该批次下该门店暂无订单" />
+        ) : orders ? (
+          <Table<BillStoreOrder>
+            size="small"
+            rowKey="order_no"
+            dataSource={orders.orders}
+            pagination={false}
+            columns={[
+              {
+                title: '订单号',
+                dataIndex: 'order_no',
+                key: 'order_no',
+                render: (v: string) => <Typography.Text code className="hp-split-order-no">{v}</Typography.Text>,
+              },
+              {
+                title: '金额',
+                dataIndex: 'amount',
+                key: 'amount',
+                align: 'right' as const,
+                render: (v: number) => <span className="hp-split-amount">{formatCents(v)}</span>,
+              },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                key: 'status',
+                width: 90,
+                render: (v: string) => <OrderStatusLabel status={v} />,
+              },
+              {
+                title: '支付时间',
+                dataIndex: 'paid_at',
+                key: 'paid_at',
+                width: 170,
+                render: (v?: string | null) =>
+                  v ? (
+                    <Text type="secondary" style={{ fontSize: 12 }}>{formatDateTime(v)}</Text>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>-</Text>
                   ),
-                },
-                {
-                  title: '金额',
-                  dataIndex: 'amount',
-                  key: 'amount',
-                  align: 'right' as const,
-                  render: (v: number) => <span style={{ fontWeight: 600 }}>{formatCents(v)}</span>,
-                },
-                {
-                  title: '状态',
-                  dataIndex: 'status',
-                  key: 'status',
-                  width: 90,
-                  render: (v: string) => <StatusTag status={v} />,
-                },
-              ]}
-            />
-            {detailItems.some((d) => d.last_error) && (
-              <div style={{ marginTop: 16 }}>
-                {detailItems
-                  .filter((d) => d.last_error)
-                  .map((d) => (
-                    <div key={`${d.receiver_entity_id}-${d.level}`} style={{ marginBottom: 8 }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {d.receiver_name}：{d.last_error}
-                      </Text>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </>
-        )}
+              },
+            ]}
+          />
+        ) : null}
       </Drawer>
     </div>
   );

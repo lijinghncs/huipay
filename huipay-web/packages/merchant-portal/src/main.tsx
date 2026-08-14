@@ -4,11 +4,16 @@ import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import dayjs from 'dayjs';
+import 'dayjs/locale/zh-cn'; // 日期组件月份/星期等文案使用中文
 import { BrowserRouter } from 'react-router-dom';
 import { createApi } from '@huipay/shared/api-client';
 import { App } from './App';
 import { getToken, merchantIdFromToken } from './services/auth';
 import './styles/global.css';
+
+// 让 antd DatePicker / dayjs 的月份、星期等显示为中文
+dayjs.locale('zh-cn');
 
 // 初始化 API 客户端
 createApi({

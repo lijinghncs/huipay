@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huipay/huipay-backend/infra/errs"
+	"github.com/huipay/huipay-backend/infra/prom"
 	"github.com/huipay/huipay-backend/internal/account/service"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/executor"
@@ -43,14 +44,15 @@ type Service struct {
 	executor       *executor.Executor
 	ruleRepo       *repository.SplitRuleRepo
 	billRepo       *repository.SplitBillRepo
+	auditRepo      *repository.SplitAuditRepo
 	account        *service.Service
 	revenueQuerier repository.StoreRevenueQuerier
 	logger         *zap.Logger
 }
 
 // NewService 构造 Service。
-func NewService(re *rule.Engine, ex *executor.Executor, ruleRepo *repository.SplitRuleRepo, billRepo *repository.SplitBillRepo, acc *service.Service, revQuerier repository.StoreRevenueQuerier, logger *zap.Logger) *Service {
-	return &Service{ruleEngine: re, executor: ex, ruleRepo: ruleRepo, billRepo: billRepo, account: acc, revenueQuerier: revQuerier, logger: logger}
+func NewService(re *rule.Engine, ex *executor.Executor, ruleRepo *repository.SplitRuleRepo, billRepo *repository.SplitBillRepo, auditRepo *repository.SplitAuditRepo, acc *service.Service, revQuerier repository.StoreRevenueQuerier, logger *zap.Logger) *Service {
+	return &Service{ruleEngine: re, executor: ex, ruleRepo: ruleRepo, billRepo: billRepo, auditRepo: auditRepo, account: acc, revenueQuerier: revQuerier, logger: logger}
 }
 
 // Execute 执行分账：按规则引擎匹配（支持门店维度），解析分配方案后落地账本。
@@ -107,6 +109,7 @@ func (s *Service) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRes
 
 	// 5) 执行落地
 	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
+		MerchantID:    req.MerchantID,
 		OrderNo:       req.OrderNo,
 		SourceWallet:  merchantWallet.ID,
 		Allocations:   allocations,
@@ -169,7 +172,16 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		return nil, errs.Wrap(errs.CodeInternalError, "query paid total failed", 200, err)
 	}
 	if total <= 0 {
-		return nil, errs.New(errs.CodeInvalidParams, "no paid amount in period", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "所选时间段内没有实收金额", 200)
+	}
+	// 记录时间段内尚未分账的订单号，供后续分账排除已分账订单（避免重复分账）
+	orderNos, err := s.revenueQuerier.ListUnsplitOrderNos(ctx, merchantID, start, end)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query unsplit orders failed", 200, err)
+	}
+	orderNosJSON, err := json.Marshal(orderNos)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInvalidParams, "marshal order list failed", 200, err)
 	}
 
 	// 按规则分配方案换算（门店占比基于时间段实收）
@@ -194,15 +206,40 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	batchNo := fmt.Sprintf("SP%d-%d-%d", matched.ID, start.Unix(), end.Unix())
 
 	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
-		OrderNo:        batchNo,
-		SourceWallet:   merchantWallet.ID,
-		Allocations:    allocations,
-		RuleID:         matched.ID,
+		MerchantID:    merchantID,
+		OrderNo:       batchNo,
+		SourceWallet:  merchantWallet.ID,
+		Allocations:   allocations,
+		RuleID:        matched.ID,
 		IdempotencyKey: "split",
-		TraceID:        "",
+		TraceID:       "",
 	}); err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "split execute failed", 200, err)
 	}
+
+	// 落地一条已执行分账单，记录覆盖订单号，供后续分账排除已分账订单（避免重复分账）。
+	// 幂等：同时间段+规则重复执行时批次号相同，Create 命中唯一键冲突则忽略。
+	now := time.Now()
+	detailJSON, _ := json.Marshal(allocationsToItems(allocations))
+	executedBill := &repository.SplitBillModel{
+		BatchNo:     batchNo,
+		MerchantID:  merchantID,
+		RuleCode:    matched.RuleCode,
+		RuleName:    matched.RuleName,
+		StartTime:   start,
+		EndTime:     end,
+		TotalAmount: total,
+		Detail:      string(detailJSON),
+		OrderNos:    string(orderNosJSON),
+		Status:      repository.BillExecuted,
+		ApprovedAt:  &now,
+		ExecutedAt:  &now,
+	}
+	if err := s.billRepo.Create(ctx, executedBill); err != nil {
+		s.logger.Warn("record executed split bill failed",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
+
 	return &ExecuteByPeriodResponse{
 		BatchNo:     batchNo,
 		TotalAmount: total,
@@ -238,7 +275,7 @@ func (s *Service) buildAllocationsPeriod(ctx context.Context, r *rule.Rule, tota
 		}
 		used += amount
 		if a.ReceiverScope == "ALL_STORES" {
-			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, start, end)
+			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, start, end, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -310,7 +347,16 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 		return nil, errs.Wrap(errs.CodeInternalError, "query paid total failed", 200, err)
 	}
 	if total <= 0 {
-		return nil, errs.New(errs.CodeInvalidParams, "no paid amount in period", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "所选时间段内没有实收金额", 200)
+	}
+	// 记录时间段内尚未分账的订单号，供后续分账排除已分账订单（避免重复分账）
+	orderNos, err := s.revenueQuerier.ListUnsplitOrderNos(ctx, merchantID, start, end)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query unsplit orders failed", 200, err)
+	}
+	orderNosJSON, err := json.Marshal(orderNos)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInvalidParams, "marshal order list failed", 200, err)
 	}
 
 	allocations, aErr := s.buildAllocationsPeriod(ctx, matched, total, start, end)
@@ -338,6 +384,7 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 		EndTime:     end,
 		TotalAmount: total,
 		Detail:      string(detailJSON),
+		OrderNos:    string(orderNosJSON),
 		Status:      repository.BillPending,
 	}
 	if err := s.billRepo.Create(ctx, m); err != nil {
@@ -383,6 +430,150 @@ func (s *Service) GetBillDetail(ctx context.Context, merchantID uint64, batchNo 
 	return billToDTO(bill), nil
 }
 
+// BillStoreItem 批次内门店汇总行。
+type BillStoreItem struct {
+	StoreID   uint64 `json:"store_id"`
+	StoreName string `json:"store_name"`
+	Amount    int64  `json:"amount"`
+	Ratio     string `json:"ratio"` // 占比百分比（两位小数）
+}
+
+// BillStoreSummary 批次门店汇总视图。
+type BillStoreSummary struct {
+	BatchNo     string          `json:"batch_no"`
+	RuleCode    string          `json:"rule_code"`
+	RuleName    string          `json:"rule_name"`
+	StartTime   string          `json:"start_time"`
+	EndTime     string          `json:"end_time"`
+	TotalAmount int64           `json:"total_amount"`
+	Status      string          `json:"status"`
+	Stores      []BillStoreItem `json:"stores"`
+}
+
+// BillStoreOrder 批次内某门店的订单行。
+type BillStoreOrder struct {
+	OrderNo string  `json:"order_no"`
+	Amount  int64   `json:"amount"`
+	Status  string  `json:"status"`
+	PaidAt  *string `json:"paid_at"`
+}
+
+// BillStoreOrders 批次内某门店订单明细视图。
+type BillStoreOrders struct {
+	BatchNo   string           `json:"batch_no"`
+	StoreID   uint64           `json:"store_id"`
+	StoreName string           `json:"store_name"`
+	Orders    []BillStoreOrder `json:"orders"`
+}
+
+// BillStoreSummary 查询某分账批次号下的门店汇总（门店名 / 可分金额 / 占比）。
+func (s *Service) BillStoreSummary(ctx context.Context, merchantID uint64, batchNo string) (*BillStoreSummary, error) {
+	if s.billRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "split bill repo not configured", 500)
+	}
+	bill, err := s.billRepo.GetByBatchNo(ctx, batchNo, merchantID)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split bill failed", 200, err)
+	}
+	if bill == nil || bill.Status == repository.BillRejected {
+		return nil, errs.New(errs.CodeInvalidParams, "split bill not found", 200)
+	}
+	var items []repository.SplitBillItem
+	_ = json.Unmarshal([]byte(bill.Detail), &items)
+	// 仅取门店(STORE)接收方
+	var storeIDs []uint64
+	amountByStore := make(map[uint64]int64)
+	for _, it := range items {
+		if it.ReceiverType != string(vo.EntityStore) {
+			continue
+		}
+		storeIDs = append(storeIDs, it.ReceiverEntityID)
+		amountByStore[it.ReceiverEntityID] = it.Amount
+	}
+	names, err := s.billRepo.GetStoreNames(ctx, storeIDs)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query store names failed", 200, err)
+	}
+	stores := make([]BillStoreItem, 0, len(storeIDs))
+	for _, sid := range storeIDs {
+		amount := amountByStore[sid]
+		ratio := ""
+		if bill.TotalAmount > 0 {
+			ratio = fmt.Sprintf("%.2f", float64(amount)/float64(bill.TotalAmount)*100)
+		}
+		stores = append(stores, BillStoreItem{
+			StoreID:   sid,
+			StoreName: names[sid],
+			Amount:    amount,
+			Ratio:     ratio,
+		})
+	}
+	return &BillStoreSummary{
+		BatchNo:     bill.BatchNo,
+		RuleCode:    bill.RuleCode,
+		RuleName:    bill.RuleName,
+		StartTime:   bill.StartTime.Format(time.RFC3339),
+		EndTime:     bill.EndTime.Format(time.RFC3339),
+		TotalAmount: bill.TotalAmount,
+		Status:      bill.Status,
+		Stores:      stores,
+	}, nil
+}
+
+// BillStoreOrders 查询某分账批次号下某门店对应的订单交易明细。
+func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchNo string, storeID uint64) (*BillStoreOrders, error) {
+	if s.billRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "split bill repo not configured", 500)
+	}
+	if storeID == 0 {
+		return nil, errs.New(errs.CodeInvalidParams, "store_id required", 200)
+	}
+	bill, err := s.billRepo.GetByBatchNo(ctx, batchNo, merchantID)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split bill failed", 200, err)
+	}
+	if bill == nil || bill.Status == repository.BillRejected {
+		return nil, errs.New(errs.CodeInvalidParams, "split bill not found", 200)
+	}
+	var orderNos []string
+	_ = json.Unmarshal([]byte(bill.OrderNos), &orderNos)
+	storeName := ""
+	if n, err := s.billRepo.GetStoreNames(ctx, []uint64{storeID}); err == nil {
+		storeName = n[storeID]
+	}
+	type row struct {
+		OrderNo string
+		Amount  int64
+		Status  string
+		PaidAt  *time.Time
+	}
+	var rows []row
+	if len(orderNos) > 0 {
+		if err := s.billRepo.DB().WithContext(ctx).Table("t_order").
+			Select("order_no, amount, status, paid_at").
+			Where("merchant_id = ? AND store_id = ? AND order_no IN ? AND deleted_at IS NULL", merchantID, storeID, orderNos).
+			Order("created_at DESC").
+			Scan(&rows).Error; err != nil {
+			return nil, errs.Wrap(errs.CodeInternalError, "query store orders failed", 200, err)
+		}
+	}
+	orders := make([]BillStoreOrder, 0, len(rows))
+	for _, r := range rows {
+		var paidAt *string
+		if r.PaidAt != nil {
+			s := r.PaidAt.Format(time.RFC3339)
+			paidAt = &s
+		}
+		orders = append(orders, BillStoreOrder{OrderNo: r.OrderNo, Amount: r.Amount, Status: r.Status, PaidAt: paidAt})
+	}
+	return &BillStoreOrders{
+		BatchNo:   bill.BatchNo,
+		StoreID:   storeID,
+		StoreName: storeName,
+		Orders:    orders,
+	}, nil
+}
+
 // ApproveBill 审批通过分账单并执行：校验余额后调用 executor 转账，账单状态置 EXECUTED。
 func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo string) (*BillDTO, error) {
 	bill, err := s.getPendingBill(ctx, merchantID, batchNo)
@@ -407,40 +598,72 @@ func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo st
 	}
 
 	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
-		OrderNo:        bill.BatchNo,
-		SourceWallet:   merchantWallet.ID,
-		Allocations:    allocations,
-		RuleID:         0,
+		MerchantID:    merchantID,
+		OrderNo:       bill.BatchNo,
+		SourceWallet:  merchantWallet.ID,
+		Allocations:   allocations,
+		RuleID:        0,
 		IdempotencyKey: "split",
-		TraceID:        "",
+		TraceID:       "",
 	}); err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "split execute failed", 200, err)
 	}
 
 	now := time.Now()
-	if err := s.billRepo.UpdateStatus(ctx, bill.ID, repository.BillExecuted, map[string]any{
+	ok, uErr := s.billRepo.UpdateStatus(ctx, bill.ID, repository.BillExecuted, map[string]any{
 		"approved_at": now,
 		"executed_at": now,
-	}); err != nil {
-		return nil, errs.Wrap(errs.CodeInternalError, "update split bill failed", 200, err)
+	})
+	if uErr != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "update split bill failed", 200, uErr)
 	}
+	if !ok {
+		// 乐观锁：账单已被并发审批/处理，资金只分一次（executor 幂等兜底）
+		return nil, errs.New(errs.CodeInvalidParams, "bill already processed by another request", 200)
+	}
+	s.appendAudit(ctx, "BILL", batchNo, "APPROVE", merchantID, map[string]any{"total_amount": bill.TotalAmount})
 	bill.Status = repository.BillExecuted
 	bill.ApprovedAt = &now
 	bill.ExecutedAt = &now
 	return billToDTO(bill), nil
 }
 
-// RejectBill 驳回分账单（仅待审批状态可驳回）。
+// RejectBill 驳回分账单（仅待审批状态可驳回，乐观锁防并发）。
 func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo string) (*BillDTO, error) {
 	bill, _, err := s.getPendingBillRaw(ctx, merchantID, batchNo)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.billRepo.UpdateStatus(ctx, bill.ID, repository.BillRejected, nil); err != nil {
-		return nil, errs.Wrap(errs.CodeInternalError, "update split bill failed", 200, err)
+	ok, uErr := s.billRepo.UpdateStatus(ctx, bill.ID, repository.BillRejected, nil)
+	if uErr != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "update split bill failed", 200, uErr)
 	}
+	if !ok {
+		return nil, errs.New(errs.CodeInvalidParams, "bill already processed by another request", 200)
+	}
+	s.appendAudit(ctx, "BILL", batchNo, "REJECT", merchantID, nil)
 	bill.Status = repository.BillRejected
 	return billToDTO(bill), nil
+}
+
+// appendAudit 追加分账审计记录（D2；审计仓储未配置时静默忽略，不阻断业务流程）。
+func (s *Service) appendAudit(ctx context.Context, bizType, bizID, action string, operatorID uint64, detail any) {
+	if s.auditRepo == nil {
+		return
+	}
+	detailJSON := ""
+	if detail != nil {
+		b, _ := json.Marshal(detail)
+		detailJSON = string(b)
+	}
+	_ = s.auditRepo.Append(ctx, &repository.SplitAuditModel{
+		BizType:      bizType,
+		BizID:        bizID,
+		Action:       action,
+		OperatorType: "MERCHANT",
+		OperatorID:   operatorID,
+		Detail:       detailJSON,
+	})
 }
 
 // getPendingBill 查询待审批账单（校验状态）。
@@ -585,7 +808,7 @@ func (s *Service) buildAllocations(ctx context.Context, r *rule.Rule, total int6
 		used += amount
 
 		if a.ReceiverScope == "ALL_STORES" {
-			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, time.Time{}, paidAt)
+			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, time.Time{}, paidAt, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -619,7 +842,8 @@ func parsePaidAt(s string) time.Time {
 }
 
 // expandAllStores 将某分配项金额按门店实收占比拆分为逐店子分配（时间范围 [from, to]）。
-func (s *Service) expandAllStores(ctx context.Context, merchantID uint64, amount int64, level int, from, to time.Time) ([]executor.Allocation, error) {
+// storeIDs 非空时仅在这些门店内按实收占比拆分（用于规则试算的门店选择）。
+func (s *Service) expandAllStores(ctx context.Context, merchantID uint64, amount int64, level int, from, to time.Time, storeIDs []uint64) ([]executor.Allocation, error) {
 	if s.revenueQuerier == nil {
 		return nil, errs.New(errs.CodeInternalError, "store revenue querier not configured", 500)
 	}
@@ -627,14 +851,22 @@ func (s *Service) expandAllStores(ctx context.Context, merchantID uint64, amount
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "query store revenue failed", 200, err)
 	}
-	// 过滤实收为 0 的门店
+	// 过滤实收为 0 的门店，并按需仅保留指定门店（store_ids 过滤）
 	valid := make([]repository.StoreRevenue, 0, len(revenues))
+	storeSet := make(map[uint64]bool, len(storeIDs))
+	for _, sid := range storeIDs {
+		storeSet[sid] = true
+	}
 	var sum int64
 	for _, rv := range revenues {
-		if rv.Paid > 0 {
-			valid = append(valid, rv)
-			sum += rv.Paid
+		if rv.Paid <= 0 {
+			continue
 		}
+		if len(storeIDs) > 0 && !storeSet[rv.StoreID] {
+			continue
+		}
+		valid = append(valid, rv)
+		sum += rv.Paid
 	}
 	if len(valid) == 0 || sum <= 0 {
 		return nil, errs.New(errs.CodeInvalidParams, "no store revenue for split", 200)
@@ -694,8 +926,16 @@ type ExecutionPage struct {
 	Total int64                            `json:"total"`
 }
 
-// ListExecutions 分页查询商户分账记录（按订单聚合）。
-func (s *Service) ListExecutions(ctx context.Context, merchantID uint64, page, size int) (*ExecutionPage, error) {
+// ExecutionFilter 分账记录过滤（HTTP 层）。
+type ExecutionFilter struct {
+	Status string
+	Start  string // RFC3339（可选）
+	End    string // RFC3339（可选）
+	RuleID uint64
+}
+
+// ListExecutions 分页查询商户分账记录（按订单聚合，支持状态/时间/规则过滤）。
+func (s *Service) ListExecutions(ctx context.Context, merchantID uint64, page, size int, f ExecutionFilter) (*ExecutionPage, error) {
 	if s.executor == nil {
 		return nil, errs.New(errs.CodeInternalError, "split executor not configured", 500)
 	}
@@ -705,7 +945,18 @@ func (s *Service) ListExecutions(ctx context.Context, merchantID uint64, page, s
 	if size < 1 || size > 200 {
 		size = 20
 	}
-	items, total, err := s.executor.ListByMerchant(ctx, merchantID, (page-1)*size, size)
+	ef := executor.SplitExecutionFilter{Status: f.Status, RuleID: f.RuleID}
+	if f.Start != "" {
+		if t, err := time.Parse(time.RFC3339, f.Start); err == nil {
+			ef.Start = t
+		}
+	}
+	if f.End != "" {
+		if t, err := time.Parse(time.RFC3339, f.End); err == nil {
+			ef.End = t
+		}
+	}
+	items, total, err := s.executor.ListByMerchant(ctx, merchantID, (page-1)*size, size, ef)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "query split executions failed", 200, err)
 	}
@@ -879,4 +1130,303 @@ func (s *Service) DeleteRule(ctx context.Context, id, merchantID uint64) error {
 		return errs.New(errs.CodeInvalidParams, "split rule not found", 200)
 	}
 	return s.ruleRepo.Delete(ctx, id, merchantID)
+}
+
+// PreviewRequest 分账预览请求（不落库，仅试算）。
+// 两种模式二选一：Amount（单笔试算）或 Start/End（时间段账单预览）。
+type PreviewRequest struct {
+	RuleCode string   `json:"rule_code" binding:"required"`
+	Amount   int64    `json:"amount"`     // 单笔试算金额（分），>0 时启用单笔模式
+	Start    string   `json:"start"`      // 时间段模式起始（RFC3339）
+	End      string   `json:"end"`        // 时间段模式结束（RFC3339）
+	StoreIDs []uint64 `json:"store_ids"`  // 可选：限定参与分摊的门店（空=全部门店）
+	Channel  string   `json:"channel"`    // 可选：通道
+}
+
+// PreviewItem 预览明细行。
+type PreviewItem struct {
+	ReceiverEntityID uint64 `json:"receiver_entity_id"`
+	ReceiverType     string `json:"receiver_type"`
+	ReceiverName     string `json:"receiver_name"`
+	Amount           int64  `json:"amount"`
+	Ratio            int64  `json:"ratio"` // 万分比（金额 ÷ 总额 * 10000）
+}
+
+// PreviewResponse 分账预览响应。
+type PreviewResponse struct {
+	RuleCode       string        `json:"rule_code"`
+	RuleName       string        `json:"rule_name"`
+	Mode           string        `json:"mode"` // amount / period
+	TotalAmount    int64         `json:"total_amount"`
+	Items          []PreviewItem `json:"items"`
+	MerchantRemain int64         `json:"merchant_remain"` // 未分配归商户金额（分）
+}
+
+// Preview 分账试算：选定规则，按单笔金额或时间段实收预览分配，不落库。
+func (s *Service) Preview(ctx context.Context, merchantID uint64, req *PreviewRequest) (*PreviewResponse, error) {
+	if s.ruleRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "split rule repo not configured", 500)
+	}
+	matched, err := s.ruleRepo.GetByCodeAndMerchant(ctx, req.RuleCode, merchantID)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split rule failed", 200, err)
+	}
+	if matched == nil {
+		return nil, errs.New(errs.CodeSplitRuleNotMatch, "split rule not found", 200)
+	}
+
+	var allocations []executor.Allocation
+	var total int64
+	var mode string
+	switch {
+	case req.Amount > 0:
+		mode = "amount"
+		total = req.Amount
+		allocations, err = s.buildAllocationsFiltered(ctx, matched, total, time.Time{}, req.StoreIDs)
+		if err != nil {
+			return nil, err
+		}
+	case req.Start != "" && req.End != "":
+		mode = "period"
+		start, err1 := time.Parse(time.RFC3339, req.Start)
+		end, err2 := time.Parse(time.RFC3339, req.End)
+		if err1 != nil || err2 != nil {
+			return nil, errs.New(errs.CodeInvalidParams, "invalid start/end time", 200)
+		}
+		if !end.After(start) {
+			return nil, errs.New(errs.CodeInvalidParams, "end must be after start", 200)
+		}
+		if s.revenueQuerier == nil {
+			return nil, errs.New(errs.CodeInternalError, "store revenue querier not configured", 500)
+		}
+		total, err = s.revenueQuerier.SumPaid(ctx, merchantID, start, end)
+		if err != nil {
+			return nil, errs.Wrap(errs.CodeInternalError, "query paid total failed", 200, err)
+		}
+		if total <= 0 {
+			return nil, errs.New(errs.CodeInvalidParams, "所选时间段内没有实收金额", 200)
+		}
+		allocations, err = s.buildAllocationsPeriodFiltered(ctx, matched, total, start, end, req.StoreIDs)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errs.New(errs.CodeInvalidParams, "amount or start/end required", 200)
+	}
+
+	items := allocationsToItems(allocations)
+	if err := s.fillBillItemNames(ctx, items); err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "fill receiver names failed", 200, err)
+	}
+	out := make([]PreviewItem, 0, len(items))
+	var used int64
+	for _, it := range items {
+		ratio := int64(0)
+		if total > 0 {
+			ratio = it.Amount * 10000 / total
+		}
+		used += it.Amount
+		out = append(out, PreviewItem{
+			ReceiverEntityID: it.ReceiverEntityID,
+			ReceiverType:     it.ReceiverType,
+			ReceiverName:     it.ReceiverName,
+			Amount:           it.Amount,
+			Ratio:            ratio,
+		})
+	}
+	remain := total - used
+	if remain < 0 {
+		remain = 0
+	}
+	return &PreviewResponse{
+		RuleCode:       matched.RuleCode,
+		RuleName:       matched.RuleName,
+		Mode:           mode,
+		TotalAmount:    total,
+		Items:          out,
+		MerchantRemain: remain,
+	}, nil
+}
+
+// buildAllocationsFiltered 单笔金额试算：同 buildAllocations，但 ALL_STORES 支持门店过滤。
+func (s *Service) buildAllocationsFiltered(ctx context.Context, r *rule.Rule, total int64, paidAt time.Time, storeIDs []uint64) ([]executor.Allocation, error) {
+	if len(r.Allocations) == 0 {
+		return nil, errs.New(errs.CodeSplitRuleNotMatch, "split rule has no allocations", 200)
+	}
+	allocations := make([]executor.Allocation, 0, len(r.Allocations))
+	var ratioSum int64
+	for _, a := range r.Allocations {
+		ratioSum += a.RatioBps
+	}
+	var used int64
+	for i, a := range r.Allocations {
+		amount := a.FixedAmount
+		if a.RatioBps > 0 {
+			amount = total * a.RatioBps / 10000
+		}
+		if amount <= 0 {
+			return nil, errs.New(errs.CodeInvalidParams, "invalid allocation amount", 200)
+		}
+		if i == len(r.Allocations)-1 && ratioSum == 10000 {
+			if remain := total - used; remain > 0 && remain != amount {
+				amount = remain
+			}
+		}
+		used += amount
+		if a.ReceiverScope == "ALL_STORES" {
+			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, time.Time{}, paidAt, storeIDs)
+			if err != nil {
+				return nil, err
+			}
+			allocations = append(allocations, expanded...)
+			continue
+		}
+		allocations = append(allocations, executor.Allocation{
+			Level:      i + 1,
+			EntityID:   a.ReceiverEntityID,
+			EntityType: vo.EntityType(a.ReceiverType),
+			Amount:     amount,
+		})
+	}
+	if used > total {
+		return nil, errs.New(errs.CodeInvalidParams, "allocations exceed amount", 200)
+	}
+	return allocations, nil
+}
+
+// buildAllocationsPeriodFiltered 时间段试算：同 buildAllocationsPeriod，但 ALL_STORES 支持门店过滤。
+func (s *Service) buildAllocationsPeriodFiltered(ctx context.Context, r *rule.Rule, total int64, start, end time.Time, storeIDs []uint64) ([]executor.Allocation, error) {
+	if len(r.Allocations) == 0 {
+		return nil, errs.New(errs.CodeSplitRuleNotMatch, "split rule has no allocations", 200)
+	}
+	allocations := make([]executor.Allocation, 0, len(r.Allocations))
+	var ratioSum int64
+	for _, a := range r.Allocations {
+		ratioSum += a.RatioBps
+	}
+	var used int64
+	for i, a := range r.Allocations {
+		amount := a.FixedAmount
+		if a.RatioBps > 0 {
+			amount = total * a.RatioBps / 10000
+		}
+		if amount <= 0 {
+			return nil, errs.New(errs.CodeInvalidParams, "invalid allocation amount", 200)
+		}
+		if i == len(r.Allocations)-1 && ratioSum == 10000 {
+			if remain := total - used; remain > 0 && remain != amount {
+				amount = remain
+			}
+		}
+		used += amount
+		if a.ReceiverScope == "ALL_STORES" {
+			expanded, err := s.expandAllStores(ctx, r.MerchantID, amount, i+1, start, end, storeIDs)
+			if err != nil {
+				return nil, err
+			}
+			allocations = append(allocations, expanded...)
+			continue
+		}
+		allocations = append(allocations, executor.Allocation{
+			Level:      i + 1,
+			EntityID:   a.ReceiverEntityID,
+			EntityType: vo.EntityType(a.ReceiverType),
+			Amount:     amount,
+		})
+	}
+	if used > total {
+		return nil, errs.New(errs.CodeInvalidParams, "allocations exceed amount", 200)
+	}
+	return allocations, nil
+}
+
+// RetryResult 重试结果。
+type RetryResult struct {
+	OrderNo  string `json:"order_no"`
+	Success  int    `json:"success"` // 重试后成功接收方数
+	Failed   int    `json:"failed"`  // 重试后失败接收方数
+	Retried  int    `json:"retried"` // 本次实际重试的接收方数
+}
+
+// RetryExecution 重试失败/部分失败的订单分账：仅重建未成功接收方的分配并重跑 executor（幂等跳过已成功接收方）。
+func (s *Service) RetryExecution(ctx context.Context, merchantID uint64, orderNo string) (*RetryResult, error) {
+	if s.executor == nil {
+		return nil, errs.New(errs.CodeInternalError, "split executor not configured", 500)
+	}
+	rows, err := s.executor.ListByOrderNoForMerchant(ctx, merchantID, orderNo)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split execution failed", 200, err)
+	}
+	if rows == nil {
+		return nil, errs.New(errs.CodeInvalidParams, "split execution not found", 200)
+	}
+	if len(rows) == 0 {
+		return nil, errs.New(errs.CodeInvalidParams, "no split execution to retry", 200)
+	}
+
+	// 重建未成功接收方分配
+	allocations := make([]executor.Allocation, 0, len(rows))
+	var ruleID, storeID uint64
+	var ch vo.ChannelCode
+	for _, r := range rows {
+		if r.Status == "SUCCESS" {
+			continue
+		}
+		allocations = append(allocations, executor.Allocation{
+			Level:      r.Level,
+			EntityID:   r.ReceiverEntityID,
+			EntityType: vo.EntityType(r.ReceiverType),
+			Amount:     r.Amount,
+		})
+		if r.RuleID != nil {
+			ruleID = *r.RuleID
+		}
+		if r.StoreID != nil {
+			storeID = *r.StoreID
+		}
+		ch = vo.ChannelCode(r.Channel)
+	}
+	if len(allocations) == 0 {
+		// 均已成功，无需重试
+		return &RetryResult{OrderNo: orderNo, Success: len(rows), Failed: 0, Retried: 0}, nil
+	}
+
+	if s.account == nil {
+		return nil, errs.New(errs.CodeInternalError, "account service not configured", 500)
+	}
+	merchantWallet, wErr := s.account.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
+	if wErr != nil || merchantWallet == nil {
+		return nil, errs.New(errs.CodeInternalError, "merchant wallet not found", 200)
+	}
+
+	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
+		MerchantID:    merchantID,
+		OrderNo:       orderNo,
+		SourceWallet:  merchantWallet.ID,
+		Allocations:   allocations,
+		StoreID:       storeID,
+		RuleID:        ruleID,
+		Channel:       ch,
+		IdempotencyKey: "split",
+		TraceID:       "",
+	}); err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "retry split execution failed", 200, err)
+	}
+	s.appendAudit(ctx, "EXECUTION", orderNo, "RETRY", merchantID, map[string]any{"retried": len(allocations)})
+	prom.SplitRetryTotal.Inc()
+
+	// 重试后统计
+	after, err := s.executor.ListByOrderNo(ctx, orderNo)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split execution failed", 200, err)
+	}
+	var success, failed int
+	for _, r := range after {
+		if r.Status == "SUCCESS" {
+			success++
+		} else {
+			failed++
+		}
+	}
+	return &RetryResult{OrderNo: orderNo, Success: success, Failed: failed, Retried: len(allocations)}, nil
 }
