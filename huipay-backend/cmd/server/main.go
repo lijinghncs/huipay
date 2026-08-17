@@ -251,14 +251,14 @@ func main() {
 	// 事件系统：outbox 仓储 + 内存总线
 	splitOutboxRepo := event.NewOutboxRepo(dbConn.Master)
 	evtBus := event.NewBus()
-	evtBus.Subscribe(event.TypeSplitOrderExecuted, event.SplitOrderExecutedHandler(logger))
+	// 告警器（用于事件告警 + 补偿调度器）
+	alerter := notify.New(cfg.AlertWebhookURL, logger)
+	evtBus.Subscribe(event.TypeSplitOrderExecuted, event.SplitOrderExecutedHandler(logger, alerter))
 	evtBus.Subscribe(event.TypeSplitBillApproved, event.SplitBillApprovedHandler(logger))
 	evtBus.Subscribe(event.TypeSplitBillRejected, event.SplitBillRejectedHandler(logger))
-	evtBus.Subscribe(event.TypeReconcileDiffResolved, event.LogHandler(logger))
+	evtBus.Subscribe(event.TypeReconcileDiffResolved, event.ReconcileDiffResolvedHandler(logger))
 
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, splitOrderStatusRepo, paymentRouter, splitOutboxRepo, logger)
-	// 告警器（企业微信 webhook；alert_webhook_url 空配置时为空操作）
-	alerter := notify.New(cfg.AlertWebhookURL, logger)
 	splitExec.SetAlerter(alerter)
 	splitRuleRepo := splitrepo.NewSplitRuleRepo(dbConn.Master)
 	splitBillRepo := splitrepo.NewSplitBillRepo(dbConn.Master)

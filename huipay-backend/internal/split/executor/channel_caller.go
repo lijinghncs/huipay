@@ -67,20 +67,8 @@ func (e *Executor) resolveAdapter(channelType vo.ChannelCode) channel.Adapter {
 	return e.channels.GetAdapter(channelType)
 }
 
-// ensureReceiverWallet 确保接收方钱包存在，不存在则自动创建。
+// ensureReceiverWallet 确保接收方钱包存在，并返回钱包 ID。
 func (e *Executor) ensureReceiverWallet(ctx context.Context, entityID uint64, entityType string) (uint64, error) {
-	w, err := e.walletRepo.GetByEntity(ctx, entityID)
-	if err != nil {
-		return 0, err
-	}
-	if w == nil {
-		return 0, fmt.Errorf("wallet not found for entity %d", entityID)
-	}
-	return w.ID, nil
-}
-
-// resolveWalletID 根据接收方信息查询钱包 ID。
-func (e *Executor) resolveWalletID(ctx context.Context, entityID uint64, entityType string) (uint64, error) {
 	w, err := e.walletRepo.GetByEntity(ctx, entityID)
 	if err != nil {
 		return 0, err

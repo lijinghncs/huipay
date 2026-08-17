@@ -65,6 +65,21 @@ var (
 		Name: "split_status_recompute_duration_ms", Help: "门店×日 split_status 异步汇总耗时（毫秒）",
 		Buckets: []float64{10, 30, 60, 100, 200, 500, 1000},
 	})
+
+	// ===== V3 分账执行与可观测性增强 =====
+	SplitExecutionDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "split_execution_duration_ms", Help: "分账执行耗时（毫秒，按终态标签）",
+		Buckets: []float64{50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000},
+	})
+	SplitReceiverCount = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "split_receiver_count", Help: "当前分账接收方数量",
+	})
+	SplitOutboxPendingCount = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "split_outbox_pending_total", Help: "outbox 待处理事件积压数",
+	})
+	SplitEventCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "split_event_total", Help: "分账领域事件发布数（按事件类型）",
+	}, []string{"event_type"})
 )
 
 // MustRegister 注册自定义指标（ProMetrics 已通过 promauto 自动注册）。

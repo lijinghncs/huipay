@@ -57,11 +57,22 @@
 │   │       │   ├── periodbill.go  # 时段分账 + 审批流（ExecuteByPeriod / GenerateBill / ApproveBill / RejectBill）
 │   │       │   ├── reconcile.go   # 差错中心 + 对账差异（ListExceptions / ListReconcileDiffs / ResolveReconcileDiff / ListAudits）
 │   │       │   └── rules.go       # 规则 CRUD（ListRules / CreateRule / UpdateRule / SetRuleStatus / DeleteRule）
-│   │       ├── handler/     # HTTP 层（薄适配器，无业务逻辑）
-│   │       ├── executor/    # 分账执行器（状态机 + 通道 + 账本）
+│   │       ├── handler/               # HTTP 层，拆为 5 文件（handler + split_order + bill + reconcile + rule）
+│   │       │   ├── handler.go             # Handler 结构体 + New + parsePageQuery
+│   │       │   ├── split_order_handler.go  # Execute / Get / ListExecutions / Preview / Retry
+│   │       │   ├── bill_handler.go         # ExecuteByPeriod / GenerateBill / ApproveBill / RejectBill
+│   │       │   ├── reconcile_handler.go    # ListExceptions / ListReconcileDiffs / ResolveReconcileDiff
+│   │       │   └── rule_handler.go         # ListRules / CreateRule / UpdateRule / SetRuleStatus
+│   │       ├── executor/    # 分账执行器，拆为 5 组件（P4）
+│   │       │   ├── executor.go         # 类型定义 + NewExecutor + helper 函数
+│   │       │   ├── orchestrator.go      # Execute 主流程编排（errgroup 并行处理）
+│   │       │   ├── query.go            # 查询方法（ListByOrderNo / ListByMerchant）
+│   │       │   ├── channel_caller.go    # 通道调用 + 转账 + 钱包解析（单次查询合并）
+│   │       │   ├── status_sync.go       # 状态回写 + 指标 + 事件发布 + determineFinalStatus
+│   │       │   └── balance_gate.go      # 余额预校验
 │   │       ├── rule/        # 规则引擎（DSL 解析 + 匹配）
 │   │       ├── recon/       # 前置对账（双层 Prechecker）
-│   │       ├── scheduler/   # 补偿调度 + 重算 + 日对账
+│   │       ├── scheduler/   # 补偿调度（依赖 ports.Executor 接口）+ 重算 + 日对账
 │   │       └── repository/  # 数据访问（11 个表）
 │   └── Makefile             # 本地开发命令
 └── docs/                    # 产品方案/技术方案/设计文档
@@ -73,11 +84,27 @@
 - **API 路由**：`/v1/` 前缀，含收银台、商户、分账、管理后台、门店等模块
 - **前端入口**：各 package 独立 Vite 应用，`pnpm dev:merchant` / `pnpm dev:admin` / `pnpm dev:sdk`
 - **部署端口**：后端服务端口 5000（通过 `HUIPAY_HTTP_PORT` 环境变量覆盖，默认 8080）
-- **分账模块（P0-P5 重构）**：
-  - `internal/split/alloc/` — 分配方案纯函数计算，无 DB/通道依赖，可独立单测
-  - `internal/split/event/` — 领域事件 + outbox 仓储 + 内存总线（每 5s 轮询投递）
-  - `internal/split/service/` — 按 UseCase 拆为 5 文件，各 <= 600 行，handler 零改动
+- **分账模块（P0-P5 重构 + 优化 Q1-Q5）**：
+  - `internal/split/alloc/` — 分配方案纯函数计算，无 DB/通道依赖，可独立单测 ✅
+  - `internal/split/state/` — 状态机集中（8 种状态，IsTerminal / IsClaimable / IsException / Transition）✅
+  - `internal/split/event/` — 领域事件 + outbox 仓储 + 内存总线（每 5s 轮询投递）+ 告警通知 ✅
+  - `internal/split/splitcfg/` — 配置常量集中管理 ✅
+  - `internal/split/ports/` — 依赖倒置接口（WalletResolver / Executor / Prechecker）✅
+  - `internal/split/service/` — 按 UseCase 拆为 5 文件，各 <= 600 行，handler 零改动 ✅
+  - `internal/split/executor/` — 拆为 5 组件，多接收方并行处理（errgroup）✅
+  - `internal/split/handler/` — 拆为 5 文件 ✅
+  - `internal/split/scheduler/compensate.go` — 依赖 ports.Executor 接口 ✅
   - 入口：`handler.New(svc, logger)` → `service.NewService(...)`
+- **单元测试覆盖**：
+  - `alloc` — 比例分配、固定金额、末笔补齐、ALL_STORES 展开、超总额拒绝、边界 ✅
+  - `state` — 8 状态穷举 + 非法转移 ✅
+  - `rule` — 条件匹配、优先级、分配方案解析 ✅
+  - `event/bus` — 单/多订阅者、错误传播、无订阅者、不同类型 ✅
+  - `event/handler` — DEAD 告警、SUCCESS 不告警、无效载荷、各事件类型 ✅
+  - `event/outbox` — SQLite 集成测试：Insert/Poll/MarkProcessed/MarkFailed/Delete/PublishEvent/OnConflict ✅
+  - `executor/status_sync` — determineFinalStatus 纯函数：SUCCESS/PARTIAL/TIMEOUT/DEAD 穷举 ✅
+  - `scope` — SameScope/Layer/HasMissing/Stats 各种 SQL 生成 ✅
+  - 待补充：`service/`、`handler/`、`scheduler/`、`recon/`、`repository/`
 - **事件类型**：`SPLIT_ORDER_EXECUTED`、`SPLIT_BILL_APPROVED`、`SPLIT_BILL_REJECTED`、`RECONCILE_DIFF_RESOLVED`
 
 ## 运行与预览
@@ -131,3 +158,5 @@
 - 后端可跳过数据库启动：`HUIPAY_SKIP_DB=true`（默认已配置，部署脚本中启用）
 - 后端端口通过环境变量覆盖：`HUIPAY_HTTP_PORT=5000`（部署脚本中设置）
 - 前端为多包 workspace，单独构建每个 portal
+- 单元测试使用 SQLite 内存数据库（`github.com/glebarez/sqlite`），无需 MySQL
+- `CURRENT_TIMESTAMP(3)` 是 MySQL 语法，SQLite 测试中需用 `CURRENT_TIMESTAMP` 替代

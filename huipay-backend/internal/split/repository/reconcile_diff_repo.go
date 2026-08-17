@@ -4,6 +4,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -139,6 +140,19 @@ func (r *ReconcileDiffRepo) WriteSplitPost(ctx context.Context, merchantID uint6
 		return 0, txErr
 	}
 	return len(rows), nil
+}
+
+// GetByID 按 ID + 商户查询单一差异（nil 表示未找到或不属于该商户）。
+func (r *ReconcileDiffRepo) GetByID(ctx context.Context, id, merchantID uint64) (*ReconcileDiffModel, error) {
+	var m ReconcileDiffModel
+	err := r.db.WithContext(ctx).Where("id = ? AND merchant_id = ?", id, merchantID).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 // ListForMerchant 商户端差异分页查询（强制商户隔离；resolved 非 nil 时按是否已核销过滤）。

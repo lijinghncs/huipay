@@ -84,6 +84,32 @@ func (e *Executor) upsertOrderStatus(ctx context.Context, req *ExecuteRequest, t
 
 // finalizeOrderStatus 执行结束后回写订单级状态：统计成功数、定态、重试退避/耗尽。
 // lastErr 非空表示本轮失败（部分/全部）；否则视为成功到账。
+// DetermineFinalStatus 纯函数：根据分账执行结果推导订单级状态与下次重试时间。
+// 无外部依赖，可独立单测。
+func DetermineFinalStatus(lastErr string, successCount, receiverCount, attempt int) (status state.Status, nextRetryAt *time.Time) {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if receiverCount == 0 {
+		receiverCount = 1
+	}
+	if lastErr == "" {
+		return state.Success, nil
+	}
+	if successCount > 0 && successCount < receiverCount {
+		status = state.Partial
+	} else {
+		status = state.Failed
+	}
+	if attempt < splitcfg.MaxRetryAttempts {
+		t := time.Now().Add(splitcfg.RetryBackoff(attempt))
+		nextRetryAt = &t
+	} else {
+		status = state.Dead
+	}
+	return
+}
+
 func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest, _ string, lastErr string) error {
 	if e.orderStatusRepo == nil {
 		return nil
@@ -112,28 +138,13 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	if receiverCount == 0 {
 		receiverCount = len(req.Allocations)
 	}
-	status := state.Success
-	if lastErr != "" {
-		if successCount > 0 && successCount < receiverCount {
-			status = state.Partial
-		} else {
-			status = state.Failed
-		}
-	}
 	attempt := st.AttemptCount + 1
-	var nextRetryAt *time.Time
-	if status == state.Partial || status == state.Failed {
-		if attempt < splitcfg.MaxRetryAttempts {
-			t := time.Now().Add(splitcfg.RetryBackoff(attempt))
-			nextRetryAt = &t
-		} else {
-			status = state.Dead
-			e.logger.Error("split order reached dead after retries",
-				zap.String("order_no", req.OrderNo), zap.String("last_error", lastErr))
-			// 告警：死单需人工介入（差错中心复位重开或管理端核销）
-			e.alert(ctx, "【分账死单】自动重试耗尽",
-				fmt.Sprintf("订单号：%s\n商户：%d\n最近错误：%s\n请前往差错中心处理", req.OrderNo, req.MerchantID, lastErr))
-		}
+	status, nextRetryAt := DetermineFinalStatus(lastErr, successCount, receiverCount, attempt)
+	if status == state.Dead {
+		e.logger.Error("split order reached dead after retries",
+			zap.String("order_no", req.OrderNo), zap.String("last_error", lastErr))
+		e.alert(ctx, "【分账死单】自动重试耗尽",
+			fmt.Sprintf("订单号：%s\n商户：%d\n最近错误：%s\n请前往差错中心处理", req.OrderNo, req.MerchantID, lastErr))
 	}
 
 	if err := e.orderStatusRepo.UpdateResult(ctx, req.OrderNo, successCount, string(status), attempt, nextRetryAt, lastErr); err != nil {

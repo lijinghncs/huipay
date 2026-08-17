@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/huipay/huipay-backend/infra/errs"
+	"github.com/huipay/huipay-backend/internal/split/event"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 )
 
@@ -67,8 +70,17 @@ func (s *Service) ListReconcileDiffs(ctx context.Context, merchantID uint64, dif
 	return &DiffPage{Items: items, Total: total}, nil
 }
 
-// ResolveReconcileDiff 标记对账差异为已处理。
+// ResolveReconcileDiff 标记对账差异为已处理，并发布 RECONCILE_DIFF_RESOLVED 事件。
 func (s *Service) ResolveReconcileDiff(ctx context.Context, merchantID uint64, diffID uint64) error {
+	// 先查差异详情（用于事件载荷）
+	diff, err := s.diffRepo.GetByID(ctx, diffID, merchantID)
+	if err != nil {
+		return errs.Wrap(errs.CodeInternalError, "query reconcile diff failed", 200, err)
+	}
+	if diff == nil {
+		return errs.New(errs.CodeInvalidParams, "diff not found or not owned by merchant", 200)
+	}
+
 	ok, err := s.diffRepo.Resolve(ctx, diffID, merchantID)
 	if err != nil {
 		return errs.Wrap(errs.CodeInternalError, "resolve reconcile diff failed", 200, err)
@@ -76,7 +88,19 @@ func (s *Service) ResolveReconcileDiff(ctx context.Context, merchantID uint64, d
 	if !ok {
 		return errs.New(errs.CodeInvalidParams, "diff not found or not owned by merchant", 200)
 	}
+
 	s.appendAudit(ctx, repository.AuditBizTypeReconcileDiff, "diff", "RESOLVE", merchantID, map[string]any{"diff_id": diffID})
+
+	// 发布 RECONCILE_DIFF_RESOLVED 事件
+	payload, _ := json.Marshal(event.ReconcileDiffResolvedPayload{
+		DiffID:     diffID,
+		MerchantID: merchantID,
+		DiffType:   diff.DiffType,
+		BatchNo:    "",
+	})
+	_ = s.outboxRepo.PublishEvent(ctx, event.AggregateDiff, fmt.Sprintf("%d", diffID),
+		event.TypeReconcileDiffResolved, payload)
+
 	return nil
 }
 

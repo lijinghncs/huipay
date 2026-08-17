@@ -15,28 +15,22 @@ import (
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/scheduler/framework"
 	"github.com/huipay/huipay-backend/internal/split/executor"
+	"github.com/huipay/huipay-backend/internal/split/ports"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/splitcfg"
 )
 
-// splitcfg.HangThreshold 悬挂判定阈值：PROCESSING 超过该时长未更新视为悬挂。
-	var _ = splitcfg.HangThreshold  // 使用 splitcfg 集中配置
-
-// splitcfg.BatchSize 单轮补偿处理上限。
-	var _ = splitcfg.BatchSize  // 使用 splitcfg 集中配置
-
 // CompensateScheduler 分账补偿调度器（B1 重入 + B2 悬挂检测）。
 type CompensateScheduler struct {
 	orderStatusRepo *repository.SplitOrderStatusRepo
-	executor        *executor.Executor
+	executor        ports.Executor
 	account         *service.Service
 	alerter         notify.Alerter
 	logger          *zap.Logger
 }
 
 // NewCompensateScheduler 构造调度器。
-func NewCompensateScheduler(osr *repository.SplitOrderStatusRepo, ex *executor.Executor, account *service.Service, logger *zap.Logger) *CompensateScheduler {
-	// 注册到监测注册表（保留自有 ticker，仅登记元信息）
+func NewCompensateScheduler(osr *repository.SplitOrderStatusRepo, ex ports.Executor, account *service.Service, logger *zap.Logger) *CompensateScheduler {
 	_ = framework.Register(osr.DB(), logger, framework.TaskConfig{
 		Name:        "split_compensate",
 		DisplayName: "分账补偿",
@@ -65,7 +59,6 @@ func (s *CompensateScheduler) Start(ctx context.Context, interval time.Duration)
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// 接入监测：name=split_compensate，每轮写运行日志
 				_, _ = framework.RunLogged(ctx, s.orderStatusRepo.DB(), framework.GlobalInstanceID(), "split_compensate", nil, func() (int64, error) {
 					return s.runOnce(ctx)
 				})
@@ -108,9 +101,7 @@ func (s *CompensateScheduler) runOnce(ctx context.Context) (int64, error) {
 }
 
 // reconcileOne 对单个订单补偿重入：按快照重建分配 → executor 重跑（幂等跳过已成功）。
-// 返回是否执行了重跑（认领成功且重建分配成功）。
 func (s *CompensateScheduler) reconcileOne(ctx context.Context, orderNo string) bool {
-	// 原子认领：仅当状态可重试且到期才置 PROCESSING，避免多实例/并发重复补偿
 	ok, err := s.orderStatusRepo.ClaimRetry(ctx, orderNo, time.Now())
 	if err != nil {
 		s.logger.Warn("split claim retry fail", zap.String("order_no", orderNo), zap.Error(err))
@@ -147,13 +138,11 @@ func (s *CompensateScheduler) reconcileOne(ctx context.Context, orderNo string) 
 		Allocations:  allocations,
 		RuleID:       derefUint(st.RuleID),
 	}); err != nil {
-		// 失败时 finalizeOrderStatus 已回写失败态与下次重试时间，此处仅记录
 		s.logger.Warn("split compensate execute fail", zap.String("order_no", orderNo), zap.Error(err))
 	}
 	return true
 }
 
-// derefUint 解引用 uint64 指针，nil 返回 0。
 func derefUint(p *uint64) uint64 {
 	if p == nil {
 		return 0
