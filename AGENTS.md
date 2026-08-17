@@ -11,7 +11,7 @@
   - 配置：Viper（config.yaml + HUIPAY_* 环境变量覆盖）
   - 端口：默认 8080（可通过 HUIPAY_HTTP_PORT 覆盖）
   - 迁移：golang-migrate（内嵌迁移文件，自动在启动时执行）
-- **运行时**：Node.js 24 + Go 1.25 (go.mod)
+- **运行时**：Node.js 24 + Go 1.25.0（已安装于 /usr/local/go）
 
 ## 目录结构
 

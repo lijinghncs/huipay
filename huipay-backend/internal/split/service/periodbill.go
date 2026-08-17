@@ -76,7 +76,7 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 		return nil, errs.New(errs.CodeInternalError, "bill repo not configured", 500)
 	}
 	batchNo := fmt.Sprintf("SP-BILL-%d-%s-%s", merchantID, req.StartDate, req.EndDate)
-	existing, err := s.billRepo.GetByBatchNo(ctx, batchNo)
+	existing, err := s.billRepo.GetByBatchNo(ctx, batchNo, merchantID)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "check bill failed", 200, err)
 	}
@@ -170,14 +170,14 @@ func (s *Service) BillStoreSummary(ctx context.Context, merchantID uint64, batch
 	storeIDs := make([]uint64, 0)
 	storeMap := make(map[uint64]int64)
 	storeCount := make(map[uint64]int)
+	seen := make(map[uint64]bool)
 	for _, item := range items {
-		if item.StoreID != nil {
-			sid := *item.StoreID
-			storeMap[sid] += item.Amount
-			storeCount[sid]++
-			if _, exists := storeMap[sid]; !exists {
-				storeIDs = append(storeIDs, sid)
-			}
+		sid := item.ReceiverEntityID
+		storeMap[sid] += item.Amount
+		storeCount[sid]++
+		if !seen[sid] {
+			seen[sid] = true
+			storeIDs = append(storeIDs, sid)
 		}
 	}
 
@@ -224,51 +224,51 @@ func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchN
 }
 
 // ApproveBill 审批通过账单：触发分账执行（异步状态机）。
-func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo string) error {
+func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo string) (*BillDTO, error) {
 	bill, found, err := s.getPendingBillRaw(ctx, merchantID, batchNo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !found {
-		return errs.New(errs.CodeInvalidParams, "bill not found", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "bill not found", 200)
 	}
 	if bill.Status != repository.BillPending {
-		return errs.New(errs.CodeInvalidParams, "bill is not pending", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "bill is not pending", 200)
 	}
 
 	ok, err := s.billRepo.UpdateStatus(ctx, bill.ID, "APPROVED", nil)
 	if err != nil {
-		return errs.Wrap(errs.CodeInternalError, "approve bill failed", 200, err)
+		return nil, errs.Wrap(errs.CodeInternalError, "approve bill failed", 200, err)
 	}
 	if !ok {
-		return errs.New(errs.CodeInternalError, "bill status update failed", 200)
+		return nil, errs.New(errs.CodeInternalError, "bill status update failed", 200)
 	}
 	s.appendAudit(ctx, "SPLIT_BILL", batchNo, "APPROVE", merchantID, map[string]any{"bill_id": bill.ID})
-	return nil
+	return billToDTO(bill), nil
 }
 
 // RejectBill 驳回账单。
-func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo string) error {
+func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo string) (*BillDTO, error) {
 	bill, found, err := s.getPendingBillRaw(ctx, merchantID, batchNo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !found {
-		return errs.New(errs.CodeInvalidParams, "bill not found", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "bill not found", 200)
 	}
 	if bill.Status != repository.BillPending {
-		return errs.New(errs.CodeInvalidParams, "bill is not pending", 200)
+		return nil, errs.New(errs.CodeInvalidParams, "bill is not pending", 200)
 	}
 
 	ok, err := s.billRepo.UpdateStatus(ctx, bill.ID, "REJECTED", nil)
 	if err != nil {
-		return errs.Wrap(errs.CodeInternalError, "reject bill failed", 200, err)
+		return nil, errs.Wrap(errs.CodeInternalError, "reject bill failed", 200, err)
 	}
 	if !ok {
-		return errs.New(errs.CodeInternalError, "bill status update failed", 200)
+		return nil, errs.New(errs.CodeInternalError, "bill status update failed", 200)
 	}
 	s.appendAudit(ctx, "SPLIT_BILL", batchNo, "REJECT", merchantID, map[string]any{"bill_id": bill.ID})
-	return nil
+	return billToDTO(bill), nil
 }
 
 // ExecuteByPeriod 按周期执行分账：规则匹配 → 前置对账 → 分配 → 执行 → 审计。
