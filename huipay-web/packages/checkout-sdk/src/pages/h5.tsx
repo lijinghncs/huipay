@@ -81,7 +81,7 @@ function App() {
       <PaymentResult
         type="closed"
         orderNo={order.order_no}
-        onRetry={code ? () => (window.location.href = `/h5?code=${code}`) : undefined}
+        onRetry={code ? () => (window.location.href = `${window.location.pathname.replace(/\/+$/, '')}?code=${code}`) : undefined}
         retryText="重新扫码收款"
       />
     );
@@ -115,7 +115,17 @@ function App() {
   }
 
   // 常规订单支付（有 order 参数）
-  return <div style={{ minHeight: '100vh', background: '#f6f7fb' }} />;
+  if (orderNo) {
+    return <div style={{ minHeight: '100vh', background: '#f6f7fb' }} />;
+  }
+
+  // 无参数默认状态
+  return (
+    <div style={{ minHeight: '100vh', background: '#f6f7fb', display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 16, color: '#1f2a24' }}>HuiPay 收银台</div>
+      <div style={{ fontSize: 13, color: '#5b6b62' }}>请通过扫码或订单链接访问</div>
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

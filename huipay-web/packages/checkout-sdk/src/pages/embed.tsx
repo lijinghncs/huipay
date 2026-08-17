@@ -35,6 +35,10 @@ function useEmbedInfo(order: string) {
 
 function App() {
   const order = params.get('order') ?? '';
+  // 无订单号时显示默认提示
+  if (!order) {
+    return <div style={{ minHeight: '100vh', background: '#f6f7fb', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#5b6b62', fontSize: 14 }}>请通过订单链接访问收银台</div>;
+  }
   // 微信内且未授权：先跳转 OAuth 获取 openid，再回到本页
   if (ensureWechatOpenId(apiBase)) {
     return <div style={{ padding: 24 }}>微信授权中…</div>;
