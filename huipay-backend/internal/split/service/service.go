@@ -227,7 +227,7 @@ func (s *Service) recordFailedDailyExec(ctx context.Context, merchantID uint64, 
 		bizCode = "RECONCILE_FAILED"
 		msg = alloc.TruncateMsg(cause.Error())
 	}
-	runID := alloc.FormatRunIDFail(merchantID, batchNo)
+	runID := formatRunIDFail(merchantID, batchNo)
 	m := &repository.DailyExecutionModel{
 		RunID:           runID,
 		MerchantID:      merchantID,
@@ -265,4 +265,9 @@ func (s *Service) ownsBizID(ctx context.Context, merchantID uint64, bizID string
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// formatRunIDFail 生成失败运行 ID。
+func formatRunIDFail(merchantID uint64, batchNo string) string {
+	return fmt.Sprintf("SP_RUN-FAIL-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
 }

@@ -180,7 +180,7 @@ func ItemsToAllocations(items []BillItem) []executor.Allocation {
 // CollectBizDates 收集 [start, end) 区间内每个自然日。
 func CollectBizDates(start, end time.Time) []time.Time {
 	out := []time.Time{}
-	for d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local); d.Before(end); d = d.AddDate(0, 0, 1) {
+	for d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC); d.Before(end); d = d.AddDate(0, 0, 1) {
 		out = append(out, d)
 	}
 	return out
@@ -198,14 +198,4 @@ func TruncateMsg(s string) string {
 // FormatBatchNo 生成确定性分账批次号。
 func FormatBatchNo(ruleID uint64, start, end time.Time) string {
 	return fmt.Sprintf("SP%d-%d-%d", ruleID, start.Unix(), end.Unix())
-}
-
-// FormatRunID 生成每日执行记录运行 ID。
-func FormatRunID(merchantID uint64, batchNo string) string {
-	return fmt.Sprintf("SP_RUN-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
-}
-
-// FormatRunIDFail 生成失败运行 ID。
-func FormatRunIDFail(merchantID uint64, batchNo string) string {
-	return fmt.Sprintf("SP_RUN-FAIL-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
 }

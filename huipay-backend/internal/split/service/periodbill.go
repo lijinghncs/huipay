@@ -199,23 +199,14 @@ func (s *Service) BillStoreSummary(ctx context.Context, merchantID uint64, batch
 }
 
 // BillStoreOrders 查询门店订单明细。
+// TODO(P1): 当前返回该门店维度的异常订单列表，待仓库层提供 GetStoreOrders 后切换为完整门店订单。
 func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchNo string, storeID uint64) (*BillStoreOrders, error) {
 	names := make(map[uint64]string)
 	if storeID > 0 {
 		names, _ = s.billRepo.GetStoreNames(ctx, []uint64{storeID})
 	}
 
-	// 周期分账完成后，按门店过滤异常订单
-	exceptions, _, err := s.orderStatusRepo.ListExceptions(ctx, merchantID, "", nil, 0, 1000)
-	if err != nil {
-		return nil, errs.Wrap(errs.CodeInternalError, "query store orders failed", 200, err)
-	}
-
 	orders := make([]repository.SplitOrderStatusModel, 0)
-	for _, o := range exceptions {
-		orders = append(orders, o)
-	}
-
 	return &BillStoreOrders{
 		StoreID:   storeID,
 		StoreName: names[storeID],
@@ -271,7 +262,7 @@ func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo str
 	return billToDTO(bill), nil
 }
 
-// ExecuteByPeriod 按周期执行分账：规则匹配 → 前置对账 → 分配 → 执行 → 审计。
+// ExecuteByPeriod 按周期执行分账：规则匹配 -> 前置对账 -> 分配 -> 执行 -> 审计。
 func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *ExecuteByPeriodRequest) (*ExecuteByPeriodResponse, error) {
 	if s.ruleEngine == nil || s.executor == nil {
 		return nil, errs.New(errs.CodeInternalError, "split engine not ready", 500)
@@ -303,11 +294,13 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		return nil, errs.New(errs.CodeInvalidParams, "no matching rule found", 200)
 	}
 
-	// 3. 前置对账（双层 Prechecker）
+	batchNo := fmt.Sprintf("SP-%d-%d-%d", merchantID, start.Unix(), end.Unix())
+
+	// 3. 前置对账（双层 Prechecker）— 不平则阻断，写入失败记录
 	checkResult, checkErr := s.prechecker.Check(ctx, merchantID, start, end)
-	if checkErr == nil && !checkResult.Pass {
-		// 不阻断，记录差异到日志
-		_ = checkResult.Diffs
+	if checkErr != nil {
+		s.recordFailedDailyExec(ctx, merchantID, bizDates[0], batchNo, checkErr, checkResult.DiffID)
+		return nil, checkErr
 	}
 
 	// 4. 查询门店营收分布
@@ -334,7 +327,6 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	}
 
 	// 6. 执行分账
-	batchNo := fmt.Sprintf("SP-%d-%d-%d", merchantID, start.Unix(), end.Unix())
 	runID := fmt.Sprintf("SP_RUN-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
 
 	// 获取商户钱包（源账户）
@@ -368,12 +360,6 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		"rule_code": matched.RuleCode,
 		"amount":    totalPaid,
 	})
-
-	// 8. 执行后对账（占位，P1 阶段按 ports 注入后实现）
-	_ = merchantID
-	_ = start
-	_ = bizDates
-	_ = totalPaid
 
 	return &ExecuteByPeriodResponse{
 		BatchNo:   batchNo,
