@@ -1,0 +1,12 @@
+[project]
+sub_id = "d310f0de"
+name = "huipay-web"
+requires = ["nodejs-24"]
+project_type = "web"
+version = ""
+
+[preview]
+preview_enable = "enabled"
+
+[subprojects]
+path = ["."]

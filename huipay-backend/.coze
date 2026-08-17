@@ -1,0 +1,12 @@
+[project]
+sub_id = "16285581"
+name = "huipay-backend"
+requires = ["golang-1.25"]
+project_type = "backend"
+version = ""
+
+[preview]
+preview_enable = "disabled"
+
+[subprojects]
+path = ["."]

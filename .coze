@@ -1,0 +1,20 @@
+[project]
+sub_id = "d050d527"
+name = "huipay-monorepo"
+requires = ["nodejs-24", "golang-1.25"]
+project_type = ""
+version = "0.0.35"
+
+[preview]
+preview_enable = "disabled"
+
+[deploy]
+build = ["bash", "scripts/build.sh"]
+run = ["bash", "scripts/run.sh"]
+
+[deploy.profile]
+kind = "service"
+flavor = "web"
+
+[subprojects]
+path = ["huipay-web", "huipay-backend"]

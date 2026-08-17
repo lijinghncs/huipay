@@ -49,3 +49,6 @@ build/
 out/
 *.tgz
 *.tar.gz
+
+# ===== Coze 预览 =====
+.preview
