@@ -7,6 +7,7 @@ const BACKENDS = {
   '/merchant/': { host: 'localhost', port: 5170 },
   '/admin/':    { host: 'localhost', port: 5171 },
   '/checkout/': { host: 'localhost', port: 5173 },
+  '/v1/':       { host: 'localhost', port: 5001 },
 };
 
 // 按路径前缀匹配后端
@@ -77,4 +78,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('  /merchant/ → merchant-portal :5170');
   console.log('  /admin/    → admin-portal    :5171');
   console.log('  /checkout/ → checkout-sdk    :5173');
+  console.log('  /v1/       → backend         :5001');
 });

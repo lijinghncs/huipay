@@ -15,7 +15,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/v1': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:5001',
         changeOrigin: true,
       },
     },

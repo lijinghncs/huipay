@@ -56,7 +56,7 @@
 
 ## 运行与预览
 
-### 预览（huipay-web 子项目，3 portal 统一入口）
+### 预览（huipay-web 子项目，3 portal 统一入口 + 后端 API 代理）
 
 - **预览入口**：`http://localhost:5000`（路由服务器，自动分发到各 Vite dev server）
 - **访问路径**：
@@ -64,6 +64,15 @@
   - `/admin/` → 管理后台（admin-portal，Vite dev :5171）
   - `/checkout/` → 收银台 SDK（checkout-sdk，Vite dev :5173）
   - `/checkout/h5` → 收银台 H5 页
+  - `/v1/*` → 代理到后端 API（`localhost:5001`）
+- **启动命令**：`cd huipay-web && bash scripts/run.sh`（自动启动 3 个 Vite dev server + 路由服务器）
+
+### 后端开发（huipay-backend 子项目）
+
+- **数据库**：MySQL 8.0（本地安装，root 密码 `root123`，业务库 `huipay`）
+- **后端启动**：`HUIPAY_HTTP_PORT=5001 /tmp/huipay-server`（编译产物在 `/tmp/huipay-server`）
+- **跳过数据库启动**：`HUIPAY_SKIP_DB=true`（可在无 MySQL 时启动）
+- **端口**：开发默认 8080，预览/部署用 5001 避免与前端冲突
 - **启动命令**：`cd huipay-web && bash scripts/run.sh`（自动启动 3 个 Vite dev server + 路由服务器）
 - **预览脚本**：`.coze [dev]` → `scripts/build.sh`（安装依赖）+ `scripts/run.sh`（启动全门户预览）
 
