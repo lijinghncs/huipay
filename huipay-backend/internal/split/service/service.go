@@ -17,20 +17,17 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/huipay/huipay-backend/infra/errs"
-	"github.com/huipay/huipay-backend/internal/account/service"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/alloc"
-	"github.com/huipay/huipay-backend/internal/split/executor"
-	"github.com/huipay/huipay-backend/internal/split/recon"
+	"github.com/huipay/huipay-backend/internal/split/ports"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
-	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
 )
 
 // Service 分账服务。
 type Service struct {
 	ruleEngine       *rule.Engine
-	executor         *executor.Executor
+	executor         ports.Executor
 	ruleRepo         *repository.SplitRuleRepo
 	billRepo         *repository.SplitBillRepo
 	billBizDateRepo  *repository.BillBizDateRepo
@@ -38,16 +35,15 @@ type Service struct {
 	diffRepo         *repository.ReconcileDiffRepo
 	auditRepo        *repository.SplitAuditRepo
 	orderStatusRepo  *repository.SplitOrderStatusRepo
-	account          *service.Service
+	walletResolver   ports.WalletResolver
 	revenueQuerier   repository.StoreRevenueQuerier
-	prechecker       *recon.Prechecker
-	statsSvc         *statsservice.Service
+	prechecker       ports.Prechecker
 	logger           *zap.Logger
 }
 
 // NewService 构造 Service。
 func NewService(
-	re *rule.Engine, ex *executor.Executor,
+	re *rule.Engine, ex ports.Executor,
 	ruleRepo *repository.SplitRuleRepo,
 	billRepo *repository.SplitBillRepo,
 	billBizDateRepo *repository.BillBizDateRepo,
@@ -55,10 +51,9 @@ func NewService(
 	diffRepo *repository.ReconcileDiffRepo,
 	auditRepo *repository.SplitAuditRepo,
 	orderStatusRepo *repository.SplitOrderStatusRepo,
-	acc *service.Service,
+	walletResolver ports.WalletResolver,
 	revQuerier repository.StoreRevenueQuerier,
-	prechecker *recon.Prechecker,
-	statsSvc *statsservice.Service,
+	prechecker ports.Prechecker,
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
@@ -69,9 +64,10 @@ func NewService(
 		diffRepo:        diffRepo,
 		auditRepo:       auditRepo,
 		orderStatusRepo: orderStatusRepo,
-		account:         acc, revenueQuerier: revQuerier,
-		prechecker: prechecker, statsSvc: statsSvc,
-		logger: logger,
+		walletResolver:  walletResolver,
+		revenueQuerier:  revQuerier,
+		prechecker:      prechecker,
+		logger:          logger,
 	}
 }
 

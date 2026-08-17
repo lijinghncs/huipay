@@ -85,11 +85,8 @@ func (s *Service) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRes
 	}
 
 	// 源账户：商户钱包
-	if s.account == nil {
-		return nil, errs.New(errs.CodeInternalError, "account service not configured", 500)
-	}
-	merchantWallet, wErr := s.account.GetWalletByEntityType(ctx, req.MerchantID, vo.EntityMerchant)
-	if wErr != nil || merchantWallet == nil {
+	merchantWalletID, wErr := s.walletResolver.GetWalletByEntityType(ctx, req.MerchantID, vo.EntityMerchant)
+	if wErr != nil {
 		return nil, errs.New(errs.CodeInternalError, "merchant wallet not found", 200)
 	}
 
@@ -97,7 +94,7 @@ func (s *Service) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRes
 	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
 		MerchantID:     req.MerchantID,
 		OrderNo:        req.OrderNo,
-		SourceWallet:   merchantWallet.ID,
+		SourceWallet:   merchantWalletID,
 		Allocations:    allocations,
 		StoreID:        req.StoreID,
 		RuleID:         matched.ID,
@@ -379,18 +376,15 @@ func (s *Service) RetryExecution(ctx context.Context, merchantID uint64, orderNo
 		return &RetryResult{OrderNo: orderNo, Success: len(rows), Failed: 0, Retried: 0}, nil
 	}
 
-	if s.account == nil {
-		return nil, errs.New(errs.CodeInternalError, "account service not configured", 500)
-	}
-	merchantWallet, wErr := s.account.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
-	if wErr != nil || merchantWallet == nil {
+	merchantWalletID, wErr := s.walletResolver.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
+	if wErr != nil {
 		return nil, errs.New(errs.CodeInternalError, "merchant wallet not found", 200)
 	}
 
 	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
 		MerchantID:     merchantID,
 		OrderNo:        orderNo,
-		SourceWallet:   merchantWallet.ID,
+		SourceWallet:   merchantWalletID,
 		Allocations:    allocations,
 		StoreID:        storeID,
 		RuleID:         ruleID,

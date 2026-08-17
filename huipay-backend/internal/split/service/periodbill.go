@@ -330,15 +330,15 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	runID := fmt.Sprintf("SP_RUN-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
 
 	// 获取商户钱包（源账户）
-	merchantWallet, wErr := s.account.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
-	if wErr != nil || merchantWallet == nil {
+	merchantWalletID, wErr := s.walletResolver.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
+	if wErr != nil {
 		return nil, errs.New(errs.CodeInternalError, "merchant wallet not found", 200)
 	}
 
 	execReq := &executor.ExecuteRequest{
 		OrderNo:        runID,
 		MerchantID:     merchantID,
-		SourceWallet:   merchantWallet.ID,
+		SourceWallet:   merchantWalletID,
 		Allocations:    allocations,
 		Channel:        vo.ChannelCode(req.Channel),
 		IdempotencyKey: "period-split-" + batchNo,

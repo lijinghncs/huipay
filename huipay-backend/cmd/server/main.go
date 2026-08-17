@@ -73,6 +73,23 @@ import (
 	adminhandler "github.com/huipay/huipay-backend/internal/admin/handler"
 )
 
+// walletAdapter 适配 account.Service → ports.WalletResolver
+type walletAdapter struct {
+	svc *accountservice.Service
+}
+
+func (w *walletAdapter) GetWalletByEntityType(ctx context.Context, entityID uint64, entityType vo.EntityType) (uint64, error) {
+	wallet, err := w.svc.GetWalletByEntityType(ctx, entityID, entityType)
+	if err != nil {
+		return 0, err
+	}
+	if wallet == nil {
+		return 0, errs.New(errs.CodeInternalError, "wallet not found", 200)
+	}
+	return wallet.ID, nil
+}
+
+
 // toObsFileLog 将配置的日志文件配置转换为 obs 日志文件配置。
 func toObsFileLog(c config.LogFileConfig) obs.FileLogConfig {
 	return obs.FileLogConfig{
@@ -246,14 +263,13 @@ func main() {
 
 	// 分账前置对账器（依赖 statsSvc 自动补跑 + 差异落库）
 	prechecker := recon.NewPrechecker(dbConn.Master, statsSvc, splitDiffRepo, splitAuditRepo, logger)
-
 	splitSvc := splitservice.NewService(
 		ruleEngine, splitExec,
 		splitRuleRepo, splitBillRepo,
 		splitBillBizDateRepo, splitDailyExecRepo, splitDiffRepo,
 		splitAuditRepo, splitOrderStatusRepo,
-		accountSvc, splitRevenueRepo,
-		prechecker, statsSvc,
+				walletAdapter{accountSvc},walletAdapter{accountSvc}, splitRevenueRepo,
+		prechecker,
 		logger,
 	)
 
