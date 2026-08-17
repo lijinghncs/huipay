@@ -268,7 +268,7 @@ func main() {
 		splitRuleRepo, splitBillRepo,
 		splitBillBizDateRepo, splitDailyExecRepo, splitDiffRepo,
 		splitAuditRepo, splitOrderStatusRepo,
-				walletAdapter{accountSvc},walletAdapter{accountSvc}, splitRevenueRepo,
+				&walletAdapter{accountSvc}, splitRevenueRepo,
 		prechecker,
 		logger,
 	)
