@@ -3,6 +3,7 @@ package handler
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -287,6 +288,126 @@ func (h *Handler) GetExecutionDetail(c *gin.Context) {
 		return
 	}
 	errs.OK(c, gin.H{"order_no": no, "items": rows})
+}
+
+// ============ 差错中心 ============
+
+// parsePageQuery 解析分页参数（默认 page=1, size=20，size 上限 100）。
+func parsePageQuery(c *gin.Context) (int, int) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+	return page, size
+}
+
+// ListExceptions GET /v1/merchant/split/exceptions（差错中心：异常订单聚合）。
+func (h *Handler) ListExceptions(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	page, size := parsePageQuery(c)
+	var degraded *int
+	if d := c.Query("degraded"); d != "" {
+		if v, err := strconv.Atoi(d); err == nil {
+			degraded = &v
+		}
+	}
+	resp, err := h.svc.ListExceptions(c.Request.Context(), merchantID, c.Query("status"), degraded, page, size)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ReopenExecution POST /v1/merchant/split/executions/:order_no/reopen（死单复位重开）。
+func (h *Handler) ReopenExecution(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	no := c.Param("order_no")
+	if no == "" {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "order_no required", 200))
+		return
+	}
+	if err := h.svc.ReopenExecution(c.Request.Context(), merchantID, no); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"order_no": no, "reopened": true})
+}
+
+// ListAudits GET /v1/merchant/split/audit?biz_type=&biz_id=（biz_id 必填，商户隔离）。
+func (h *Handler) ListAudits(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	page, size := parsePageQuery(c)
+	resp, err := h.svc.ListAudits(c.Request.Context(), merchantID, c.Query("biz_type"), c.Query("biz_id"), page, size)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ListReconcileDiffs GET /v1/merchant/split/reconcile-diffs（对账差异，商户隔离）。
+func (h *Handler) ListReconcileDiffs(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	startStr, endStr := c.Query("start_date"), c.Query("end_date")
+	start, err1 := time.ParseInLocation("2006-01-02", startStr, time.Local)
+	end, err2 := time.ParseInLocation("2006-01-02", endStr, time.Local)
+	if err1 != nil || err2 != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "start_date and end_date required (YYYY-MM-DD)", 200))
+		return
+	}
+	end = end.AddDate(0, 0, 1)
+	var resolved *bool
+	if r := c.Query("resolved"); r != "" {
+		v := r == "1" || r == "true"
+		resolved = &v
+	}
+	page, size := parsePageQuery(c)
+	resp, err := h.svc.ListReconcileDiffs(c.Request.Context(), merchantID, c.Query("diff_type"), resolved, start, end, page, size)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, resp)
+}
+
+// ResolveReconcileDiff POST /v1/merchant/split/reconcile-diffs/:id/resolve（差异核销）。
+func (h *Handler) ResolveReconcileDiff(c *gin.Context) {
+	merchantID := c.GetUint64("merchant_id")
+	if merchantID == 0 {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "merchant_id required", 200))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		errs.Fail(c, h.logger, errs.New(errs.CodeInvalidParams, "id invalid", 200))
+		return
+	}
+	if err := h.svc.ResolveReconcileDiff(c.Request.Context(), merchantID, id); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	errs.OK(c, gin.H{"id": id, "resolved": true})
 }
 
 // ListRules GET /v1/merchant/split/rules。

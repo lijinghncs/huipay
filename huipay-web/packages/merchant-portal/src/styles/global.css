@@ -936,3 +936,200 @@ body {
     flex-wrap: wrap;
   }
 }
+
+/* ============ 概览页 ============ */
+
+/* 欢迎 Hero：深色渐变 + 光晕 */
+.hp-dash-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 28px 32px;
+  background: linear-gradient(135deg, #0e1a2b 0%, #12335f 55%, #1e6fff 130%);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(30, 111, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.hp-dash-hero::before {
+  content: '';
+  position: absolute;
+  right: -70px;
+  top: -90px;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 182, 164, 0.35), transparent 70%);
+  pointer-events: none;
+}
+.hp-dash-hero::after {
+  content: '';
+  position: absolute;
+  left: 35%;
+  bottom: -130px;
+  width: 340px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 70%);
+  pointer-events: none;
+}
+.hp-dash-hero-main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.hp-dash-hero-hello {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.hp-dash-hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.hp-dash-hero-code {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.hp-dash-hero-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.hp-dash-hero-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.hp-dash-hero-status.is-ok {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.16);
+}
+.hp-dash-hero-status.is-ok .hp-dash-hero-status-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.8);
+}
+.hp-dash-hero-status.is-off {
+  color: #fda4af;
+  background: rgba(244, 63, 94, 0.16);
+}
+.hp-dash-hero-status.is-off .hp-dash-hero-status-dot {
+  background: #f43f5e;
+}
+.hp-dash-hero-date {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.hp-dash-hero-balance {
+  position: relative;
+  z-index: 1;
+  text-align: right;
+  flex-shrink: 0;
+  padding-left: 24px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+.hp-dash-hero-balance-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.5px;
+}
+.hp-dash-hero-balance-value {
+  font-family: 'Fira Code', Consolas, Monaco, monospace;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.hp-dash-hero-balance-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 快捷入口卡片 */
+.hp-dash-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.hp-dash-entry:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+.hp-dash-entry:hover .hp-dash-entry-arrow {
+  transform: translateX(3px);
+  color: var(--brand);
+}
+.hp-dash-entry-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.hp-dash-entry-text {
+  min-width: 0;
+  flex: 1;
+}
+.hp-dash-entry-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.hp-dash-entry-desc {
+  font-size: 12px;
+  color: var(--text-sub);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hp-dash-entry-arrow {
+  color: #b0b8c8;
+  font-size: 13px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .hp-dash-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .hp-dash-hero-balance {
+    width: 100%;
+    text-align: left;
+    padding-left: 0;
+    border-left: none;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+}

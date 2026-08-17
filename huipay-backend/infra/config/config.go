@@ -22,7 +22,10 @@ type Config struct {
 	AppEnv      string `mapstructure:"app_env"` // local / staging / production
 	AuthSecret  string `mapstructure:"auth_secret"` // 商户登录 token 签名密钥（生产必配）
 	TrustMerchantHeader bool `mapstructure:"trust_merchant_header"` // 是否信任 X-Merchant-Id 明文头（仅开发；生产置 false）
+	AdminUsername string `mapstructure:"admin_username"` // 管理后台登录账号（可用 HUIPAY_ADMIN_USERNAME 覆盖）
+	AdminPassword string `mapstructure:"admin_password"` // 管理后台登录密码（可用 HUIPAY_ADMIN_PASSWORD 覆盖）
 	CheckoutBaseURL string `mapstructure:"checkout_base_url"` // 收银台 H5 地址前缀，如 https://checkout.huipay.cn
+	AlertWebhookURL string `mapstructure:"alert_webhook_url"` // 告警 webhook（企业微信机器人 markdown），空则不告警；可用 HUIPAY_ALERT_WEBHOOK_URL 覆盖
 	WeChat      WeChatConfig `mapstructure:"wechat"`
 }
 

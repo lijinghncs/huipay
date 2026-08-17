@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm/clause"
 
+	"github.com/huipay/huipay-backend/infra/notify"
 	"github.com/huipay/huipay-backend/infra/prom"
 	"github.com/huipay/huipay-backend/internal/account/ledger"
 	"github.com/huipay/huipay-backend/internal/account/repository"
@@ -24,6 +25,13 @@ import (
 
 // maxAttempts 通道调用与内部转账的最大尝试次数。
 const maxAttempts = 3
+
+// 分账模式常量（C1 层：通道降级闸门，存 t_entity.split_mode）。
+const (
+	SplitModeAuto            = "AUTO"             // 有通道走通道；无通道降级本地入账并标记 degraded
+	SplitModeLocalOnly       = "LOCAL_ONLY"       // 仅本地记账（不调通道，标记 degraded）
+	SplitModeChannelRequired = "CHANNEL_REQUIRED" // 通道不可用即失败，不本地入账
+)
 
 // Allocation 分账分配单元。
 type Allocation struct {
@@ -76,6 +84,7 @@ type Executor struct {
 	orderStatusRepo *splitrepo.SplitOrderStatusRepo
 	ledger          *ledger.Service
 	channels        *router.Router
+	alerter         notify.Alerter
 	logger          *zap.Logger
 }
 
@@ -88,6 +97,21 @@ func NewExecutor(wr *repository.WalletRepo, jr *repository.JournalRepo, osr *spl
 		ledger:          ledger.NewService(wr, jr, logger),
 		channels:        channels,
 		logger:          logger,
+	}
+}
+
+// SetAlerter 注入告警器（可选；不注入则告警为空操作）。
+func (e *Executor) SetAlerter(a notify.Alerter) {
+	if a == nil {
+		a = notify.NoopAlerter{}
+	}
+	e.alerter = a
+}
+
+// alert 安全触发告警（未注入时为空操作）。
+func (e *Executor) alert(ctx context.Context, title, content string) {
+	if e.alerter != nil {
+		e.alerter.Alert(ctx, title, content)
 	}
 }
 
@@ -124,10 +148,24 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) error {
 		return e.finalizeOrderStatus(ctx, req, "", err.Error())
 	}
 
+	// C1 分账模式闸门：AUTO 自动降级 / LOCAL_ONLY 仅本地 / CHANNEL_REQUIRED 强制通道
+	mode := e.getSplitMode(ctx, req.MerchantID)
 	adapter := e.resolveAdapter(req.Channel)
 	degraded := 0
-	if adapter == nil {
-		degraded = 1 // C1 通道未配置：仅本地入账并标记降级
+	switch mode {
+	case SplitModeLocalOnly:
+		adapter = nil
+		degraded = 1 // LOCAL_ONLY：仅本地记账并标记降级
+	case SplitModeChannelRequired:
+		if adapter == nil {
+			// 强制通道但通道不可用：整体失败不本地入账，进入重试队列
+			e.incFailure("channel_fail")
+			return e.finalizeOrderStatus(ctx, req, "", "channel required but not configured")
+		}
+	default: // AUTO
+		if adapter == nil {
+			degraded = 1 // 通道未配置：仅本地入账并标记降级
+		}
 	}
 
 	// A2/A4 订单级状态：PROCESSING（写入分配快照）
@@ -558,6 +596,24 @@ func (e *Executor) resolveAdapter(code vo.ChannelCode) channel.Adapter {
 	return e.channels.GetAdapter(vo.ChannelWeChat)
 }
 
+// getSplitMode 读取商户分账模式（t_entity.split_mode）；缺省/异常时保守回退 AUTO。
+func (e *Executor) getSplitMode(ctx context.Context, merchantID uint64) string {
+	var mode string
+	if err := e.journalRepo.DB().WithContext(ctx).
+		Table("t_entity").Where("id = ?", merchantID).
+		Pluck("split_mode", &mode).Error; err != nil {
+		e.logger.Warn("get merchant split mode fail, fallback AUTO",
+			zap.Uint64("merchant", merchantID), zap.Error(err))
+		return SplitModeAuto
+	}
+	switch mode {
+	case SplitModeLocalOnly, SplitModeChannelRequired:
+		return mode
+	default:
+		return SplitModeAuto
+	}
+}
+
 func (e *Executor) ensureReceiverWallet(ctx context.Context, entityID uint64, entityType vo.EntityType) (*repository.WalletModel, error) {
 	// 分账接收方为门店，按 (entity_id, entity_type) 定位，避免与商户/通道户 id 冲突；不存在则自动开通。
 	w, err := e.walletRepo.GetByEntityType(ctx, entityID, string(entityType))
@@ -687,12 +743,16 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 			status = splitrepo.OrderStatusDead
 			e.logger.Error("split order reached dead after retries",
 				zap.String("order_no", req.OrderNo), zap.String("last_error", lastErr))
+			// 告警：死单需人工介入（差错中心复位重开或管理端核销）
+			e.alert(ctx, "【分账死单】自动重试耗尽",
+				fmt.Sprintf("订单号：%s\n商户：%d\n最近错误：%s\n请前往差错中心处理", req.OrderNo, req.MerchantID, lastErr))
 		}
 	}
 
 	if err := e.orderStatusRepo.UpdateResult(ctx, req.OrderNo, successCount, status, attempt, nextRetryAt, lastErr); err != nil {
 		return err
 	}
+	e.syncOrderSplitStatus(ctx, req.OrderNo, status)
 	prom.SplitOrderTotal.WithLabelValues(status).Inc()
 	if status == splitrepo.OrderStatusSuccess {
 		prom.SplitSuccessRate.Set(1)
@@ -708,6 +768,26 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 		return fmt.Errorf("split order %s: %s", status, lastErr)
 	}
 	return nil
+}
+
+// syncOrderSplitStatus 分账定态后同步回写 t_order.split_status（仅终态）：
+// SUCCESS -> SUCCESS；FAILED/DEAD/SUSPENDED -> FAILED；PARTIAL 不写（交由补偿续跑）。
+func (e *Executor) syncOrderSplitStatus(ctx context.Context, orderNo, status string) {
+	var orderSplit string
+	switch status {
+	case splitrepo.OrderStatusSuccess:
+		orderSplit = "SUCCESS"
+	case splitrepo.OrderStatusFailed, splitrepo.OrderStatusDead, splitrepo.OrderStatusSuspended:
+		orderSplit = "FAILED"
+	default:
+		return
+	}
+	if err := e.orderStatusRepo.DB().WithContext(ctx).
+		Table("t_order").
+		Where("order_no = ?", orderNo).
+		Update("split_status", orderSplit).Error; err != nil {
+		e.logger.Warn("sync t_order.split_status fail", zap.String("order_no", orderNo), zap.Error(err))
+	}
 }
 
 // countSuccess 统计某订单已成功分账的接收方数。

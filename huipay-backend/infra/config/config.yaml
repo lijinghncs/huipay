@@ -15,6 +15,10 @@ log_file:
 # 商户登录 token 签名密钥（HUIPAY_AUTH_SECRET 可覆盖；生产环境必须通过环境变量注入强密钥）
 auth_secret: "dev-local-auth-secret-change-me"
 
+# 管理后台登录账号（HUIPAY_ADMIN_USERNAME / HUIPAY_ADMIN_PASSWORD 可覆盖；生产必须通过环境变量注入）
+admin_username: "admin"
+admin_password: "admin123"
+
 # 收银台 H5 地址前缀，付款码二维码 checkout_url 据此生成（生产应为 https://checkout.huipay.cn）
 checkout_base_url: "http://localhost:5173"
 

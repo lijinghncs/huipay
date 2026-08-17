@@ -100,6 +100,7 @@ export interface MerchantProfile {
   balance: number;
   frozen: number;
   pre_frozen: number;
+  split_mode?: string;
   created_at: string;
   updated_at: string;
 }
@@ -373,6 +374,135 @@ export async function retrySplitExecution(orderNo: string): Promise<{ order_no: 
   );
 }
 
+/* ============ 差错中心 ============ */
+
+/** 差错中心 · 异常订单行。 */
+export interface SplitExceptionItem {
+  order_no: string;
+  rule_id?: number;
+  total_amount: number;
+  receiver_count: number;
+  success_count: number;
+  status: string;
+  attempt_count: number;
+  next_retry_at?: string;
+  degraded: number;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 分页查询差错中心异常订单（FAILED/PARTIAL/SUSPENDED/DEAD/RESOLVED 或降级）。 */
+export async function listSplitExceptions(opts: {
+  page: number;
+  size: number;
+  status?: string;
+  degraded?: number;
+}): Promise<{ items: SplitExceptionItem[]; total: number }> {
+  return get<{ items: SplitExceptionItem[]; total: number }>('/v1/merchant/split/exceptions', { params: opts });
+}
+
+/** 死单复位重开（DEAD → 重新进入补偿队列）。 */
+export async function reopenSplitExecution(orderNo: string): Promise<{ order_no: string; reopened: boolean }> {
+  return post<{ order_no: string; reopened: boolean }>(`/v1/merchant/split/executions/${orderNo}/reopen`);
+}
+
+/** 分账审计日志行。 */
+export interface SplitAuditItem {
+  id: number;
+  biz_type: string;
+  biz_id: string;
+  action: string;
+  operator_type: string;
+  operator_id: number;
+  detail?: string;
+  created_at: string;
+}
+
+/** 查询某业务单号（订单号/批次号）的分账审计时间线。 */
+export async function listSplitAudits(bizId: string): Promise<{ items: SplitAuditItem[]; total: number }> {
+  return get<{ items: SplitAuditItem[]; total: number }>('/v1/merchant/split/audit', {
+    params: { biz_id: bizId, size: 50 },
+  });
+}
+
+/** 对账差异行。 */
+export interface SplitDiffItem {
+  id: number;
+  biz_date: string;
+  merchant_id?: number;
+  diff_type: string;
+  order_no?: string;
+  transaction_id?: string;
+  local_amount?: number;
+  channel_amount?: number;
+  detail?: string;
+  resolved_at?: string;
+  created_at: string;
+}
+
+/** 分页查询对账差异（商户隔离）。 */
+export async function listSplitDiffs(opts: {
+  page: number;
+  size: number;
+  start_date: string;
+  end_date: string;
+  diff_type?: string;
+  resolved?: boolean;
+}): Promise<{ items: SplitDiffItem[]; total: number }> {
+  return get<{ items: SplitDiffItem[]; total: number }>('/v1/merchant/split/reconcile-diffs', {
+    params: {
+      ...opts,
+      resolved: opts.resolved === undefined ? undefined : opts.resolved ? 1 : 0,
+    },
+  });
+}
+
+/** 核销对账差异。 */
+export async function resolveSplitDiff(id: number): Promise<{ id: number; resolved: boolean }> {
+  return post<{ id: number; resolved: boolean }>(`/v1/merchant/split/reconcile-diffs/${id}/resolve`);
+}
+
+/** 差错中心状态徽章（含悬挂/死单/已核销）。 */
+export function exceptionStatusBadge(status?: string): { text: string; color: string; bg: string } {
+  switch (status) {
+    case 'FAILED':
+      return { text: '分账失败', color: '#b91c1c', bg: 'rgba(239,68,68,0.14)' };
+    case 'PARTIAL':
+      return { text: '部分分账', color: '#b45309', bg: 'rgba(245,158,11,0.14)' };
+    case 'SUSPENDED':
+      return { text: '悬挂中', color: '#1d4ed8', bg: 'rgba(59,130,246,0.14)' };
+    case 'DEAD':
+      return { text: '死单', color: '#fff', bg: '#dc2626' };
+    case 'RESOLVED':
+      return { text: '已核销', color: '#047857', bg: 'rgba(16,185,129,0.14)' };
+    default:
+      return { text: status || '未知', color: '#64748b', bg: 'rgba(100,116,139,0.14)' };
+  }
+}
+
+/** 对账差异类型文案。 */
+export function diffTypeText(t?: string): string {
+  switch (t) {
+    case 'SPLIT_TOTAL':
+      return '前置对账·总额不平';
+    case 'SPLIT_DETAIL':
+      return '前置对账·门店日不平';
+    case 'SPLIT_POST':
+      return '执行后·账本不平';
+    case 'SPLIT_DEGRADED':
+      return '降级订单';
+    case 'LONG':
+      return '长款';
+    case 'SHORT':
+      return '短款';
+    case 'MISMATCH':
+      return '金额不一致';
+    default:
+      return t || '-';
+  }
+}
+
 /** 按时间段分账请求参数。 */
 export interface ExecuteByPeriodRequest {
   start: string;
@@ -522,4 +652,150 @@ export interface SplitPreviewRequest {
 /** 分账试算（不落库）。 */
 export async function previewSplit(data: SplitPreviewRequest): Promise<SplitPreview> {
   return post<SplitPreview>('/v1/merchant/split/preview', data);
+}
+
+// ---- 门店日报统计（当前商户） ----
+
+export interface StoreStatItem {
+  id: number;
+  merchant_id: number;
+  store_id: number;
+  biz_date: string;
+  order_count: number;
+  paid_amount: number;
+  channel_breakdown?: string;
+  status_breakdown?: string;
+  // V2 合并版：分账相关字段
+  split_status?: 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
+  split_batch_no?: string;
+  split_at?: string;
+  split_total_amount?: number;
+}
+
+/** 分账状态徽章渲染辅助（颜色映射）。 */
+export function splitStatusBadge(status?: string): { text: string; color: string; bg: string } {
+  switch (status) {
+    case 'SUCCESS':
+      return { text: '已分账', color: '#047857', bg: 'rgba(16,185,129,0.14)' };
+    case 'PARTIAL':
+      return { text: '部分分账', color: '#b45309', bg: 'rgba(245,158,11,0.14)' };
+    case 'FAILED':
+      return { text: '分账失败', color: '#b91c1c', bg: 'rgba(239,68,68,0.14)' };
+    default:
+      return { text: '未分账', color: '#64748b', bg: 'rgba(100,116,139,0.14)' };
+  }
+}
+
+export interface StoreStatListResp {
+  items: StoreStatItem[];
+  total: number;
+}
+
+export interface StoreSumRow {
+  store_id: number;
+  store_name: string;
+  order_count: number;
+  paid_amount: number;
+}
+
+export interface StoreStatSummaryResp {
+  summary: { store_id: number; order_count: number; paid_amount: number };
+  items: StoreSumRow[];
+}
+
+export interface StoreDailyRow {
+  biz_date: string;
+  order_count: number;
+  paid_amount: number;
+  channel_breakdown?: unknown;
+  status_breakdown?: unknown;
+}
+
+export interface StoreStatParams {
+  store_id?: number;
+  start_date: string;
+  end_date: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** 门店日报列表（当前商户）。 */
+export async function listStoreStats(params: StoreStatParams): Promise<StoreStatListResp> {
+  return get<StoreStatListResp>('/v1/merchant/store-stats', { params });
+}
+
+/** 多日范围门店汇总（当前商户）。 */
+export async function getStoreStatSummary(params: StoreStatParams): Promise<StoreStatSummaryResp> {
+  return get<StoreStatSummaryResp>('/v1/merchant/store-stats/summary', { params });
+}
+
+/** 单门店按日明细（当前商户）。 */
+export async function getStoreDailyStats(storeId: number, startDate: string, endDate: string): Promise<StoreDailyRow[]> {
+  return get<StoreDailyRow[]>(`/v1/merchant/store-stats/stores/${storeId}/daily`, {
+    params: { start_date: startDate, end_date: endDate },
+  });
+}
+
+// ---- 定时任务监测（只读：当前商户） ----
+
+export interface SchedulerTask {
+  name: string;
+  display_name: string;
+  description?: string;
+  cron_expr?: string;
+  interval_sec?: number;
+  enabled: boolean;
+  instance_id?: string;
+  manual_supported: boolean;
+  last_status?: string;
+  last_run_at?: string;
+  last_duration_ms?: number;
+  last_rows?: number;
+}
+
+export interface SchedulerRun {
+  id: number;
+  name: string;
+  instance_id: string;
+  biz_date?: string;
+  run_mode: string;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  duration_ms?: number;
+  rows_affected?: number;
+  error_message?: string;
+  trace_id?: string;
+}
+
+export interface SchedulerRunListResp {
+  items: SchedulerRun[];
+  total: number;
+}
+
+export interface SchedulerRunFilter {
+  name?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** 已注册定时任务列表（只读）。 */
+export async function listSchedulerTasks(): Promise<SchedulerTask[]> {
+  return get<SchedulerTask[]>('/v1/merchant/scheduler/tasks');
+}
+
+/** 运行日志列表（只读）。 */
+export async function listSchedulerRuns(params: SchedulerRunFilter = {}): Promise<SchedulerRunListResp> {
+  return get<SchedulerRunListResp>('/v1/merchant/scheduler/runs', { params });
+}
+
+/** 单次运行详情（只读）。 */
+export async function getSchedulerRun(id: number): Promise<SchedulerRun> {
+  return get<SchedulerRun>(`/v1/merchant/scheduler/runs/${id}`);
+}
+
+/** 手动执行定时任务（异步触发）。bizDate 为可选业务日期（YYYY-MM-DD），缺省使用默认日期。 */
+export async function triggerSchedulerTask(name: string, bizDate?: string): Promise<{ triggered: boolean }> {
+  return post<{ triggered: boolean }>(`/v1/merchant/scheduler/tasks/${name}/run`, {}, { params: bizDate ? { biz_date: bizDate } : {} });
 }

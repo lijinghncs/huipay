@@ -14,8 +14,10 @@ import (
 	"github.com/huipay/huipay-backend/internal/account/service"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/executor"
+	"github.com/huipay/huipay-backend/internal/split/recon"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
+	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
 	"go.uber.org/zap"
 )
 
@@ -40,19 +42,50 @@ type ExecuteResponse struct {
 
 // Service 分账服务。
 type Service struct {
-	ruleEngine     *rule.Engine
-	executor       *executor.Executor
-	ruleRepo       *repository.SplitRuleRepo
-	billRepo       *repository.SplitBillRepo
-	auditRepo      *repository.SplitAuditRepo
-	account        *service.Service
-	revenueQuerier repository.StoreRevenueQuerier
-	logger         *zap.Logger
+	ruleEngine       *rule.Engine
+	executor         *executor.Executor
+	ruleRepo         *repository.SplitRuleRepo
+	billRepo         *repository.SplitBillRepo
+	billBizDateRepo  *repository.BillBizDateRepo
+	dailyExecRepo    *repository.DailyExecutionRepo
+	diffRepo         *repository.ReconcileDiffRepo
+	auditRepo        *repository.SplitAuditRepo
+	orderStatusRepo  *repository.SplitOrderStatusRepo
+	account          *service.Service
+	revenueQuerier   repository.StoreRevenueQuerier
+	prechecker       *recon.Prechecker
+	statsSvc         *statsservice.Service
+	logger           *zap.Logger
 }
 
 // NewService 构造 Service。
-func NewService(re *rule.Engine, ex *executor.Executor, ruleRepo *repository.SplitRuleRepo, billRepo *repository.SplitBillRepo, auditRepo *repository.SplitAuditRepo, acc *service.Service, revQuerier repository.StoreRevenueQuerier, logger *zap.Logger) *Service {
-	return &Service{ruleEngine: re, executor: ex, ruleRepo: ruleRepo, billRepo: billRepo, auditRepo: auditRepo, account: acc, revenueQuerier: revQuerier, logger: logger}
+func NewService(
+	re *rule.Engine, ex *executor.Executor,
+	ruleRepo *repository.SplitRuleRepo,
+	billRepo *repository.SplitBillRepo,
+	billBizDateRepo *repository.BillBizDateRepo,
+	dailyExecRepo *repository.DailyExecutionRepo,
+	diffRepo *repository.ReconcileDiffRepo,
+	auditRepo *repository.SplitAuditRepo,
+	orderStatusRepo *repository.SplitOrderStatusRepo,
+	acc *service.Service,
+	revQuerier repository.StoreRevenueQuerier,
+	prechecker *recon.Prechecker,
+	statsSvc *statsservice.Service,
+	logger *zap.Logger,
+) *Service {
+	return &Service{
+		ruleEngine: re, executor: ex,
+		ruleRepo: ruleRepo, billRepo: billRepo,
+		billBizDateRepo: billBizDateRepo,
+		dailyExecRepo:   dailyExecRepo,
+		diffRepo:        diffRepo,
+		auditRepo:       auditRepo,
+		orderStatusRepo: orderStatusRepo,
+		account:         acc, revenueQuerier: revQuerier,
+		prechecker: prechecker, statsSvc: statsSvc,
+		logger: logger,
+	}
 }
 
 // Execute 执行分账：按规则引擎匹配（支持门店维度），解析分配方案后落地账本。
@@ -139,8 +172,19 @@ type ExecuteByPeriodResponse struct {
 	Allocations []executor.Allocation  `json:"allocations"`
 }
 
-// ExecuteByPeriod 按时间段分账：选定规则，以时间段内商户实收总额为基数，按门店时间段实收占比分配。
-// 批次号由 规则+起止时间 确定性生成，同一时间段同一规则重复执行会被 executor 幂等跳过，避免重复分账。
+// ExecuteByPeriod 按时间段分账：V2 合并版全流程（前置对账 + 每日执行 + 状态机补偿）。
+//
+// 流程：
+//  1. 解析时段 + 选定规则
+//  2. 幂等短路：billRepo.GetByBatchNo 命中 → 直接返回
+//  3. 跨规则重复防护：billBizDateRepo.ListBillsByDate 命中时段内已有账单 → 拒绝
+//  4. Prechecker 双层对账（自动 Backfill + Layer A + Layer B）
+//  5. daily_execution_repo.CreateWithRunID(RUNNING)
+//  6. 计算 total + buildAllocationsPeriod
+//  7. executor.Execute (内部自治，不外层包事务)
+//  8. 反查 t_split_execution 事实 → daily_execution.MarkStatus
+//  9. billRepo.Create + billBizDateRepo.Bind + 回填订单 split_batch_no
+//  10. 触发 async recompute（同步调用，迭代 2 改 outbox）
 func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *ExecuteByPeriodRequest) (*ExecuteByPeriodResponse, error) {
 	start, err1 := time.Parse(time.RFC3339, req.Start)
 	end, err2 := time.Parse(time.RFC3339, req.End)
@@ -161,6 +205,45 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	}
 	if matched == nil {
 		return nil, errs.New(errs.CodeSplitRuleNotMatch, "split rule not found", 200)
+	}
+
+	// 批次号：确定性（同一时间段+规则幂等），供分账记录聚合展示
+	batchNo := fmt.Sprintf("SP%d-%d-%d", matched.ID, start.Unix(), end.Unix())
+
+	// 2. 幂等短路（V2 评审要点 🔴4 / 🟠14）
+	if s.billRepo != nil {
+		if existing, _ := s.billRepo.GetByBatchNo(ctx, batchNo, merchantID); existing != nil {
+			return &ExecuteByPeriodResponse{
+				BatchNo: existing.BatchNo,
+				RuleCode: existing.RuleCode,
+			}, nil
+		}
+	}
+
+	// 3. 跨规则重复防护（V2 评审要点 🔴3）：时段内已有非 REJECTED 账单则拒绝
+	if s.billBizDateRepo != nil {
+		// 遍历时段内每个 biz_date 检查是否有任何账单覆盖（不论 EXECUTED 还是 PENDING/APPROVED）
+		for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
+			billIDs, _ := s.billBizDateRepo.ListBillsByDate(ctx, merchantID, d)
+			if len(billIDs) > 0 {
+				return nil, errs.New(
+					errs.CodeSplitPeriodOverlapped,
+					fmt.Sprintf("时段内 %s 已有账单覆盖，请先驳回或重跑", d.Format("2006-01-02")),
+					200,
+				)
+			}
+		}
+	}
+
+	// 4. Prechecker 双层对账（V2 评审要点 🔴1/2 + 性能 🔴7 已用 LEFT JOIN 优化）
+	if s.prechecker != nil {
+		result, pErr := s.prechecker.Check(ctx, merchantID, start, end)
+		if pErr != nil {
+			// 写失败执行记录 + 审计
+			s.recordFailedDailyExec(ctx, merchantID, start, batchNo, pErr, nil)
+			return nil, pErr
+		}
+		_ = result // 通过后继续
 	}
 
 	// 时间段内商户实收总额（分账基数）
@@ -202,25 +285,99 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		return nil, errs.New(errs.CodeInsufficientBalance, "insufficient wallet balance for period split", 200)
 	}
 
-	// 批次号：确定性（同一时间段+规则幂等），供分账记录聚合展示
-	batchNo := fmt.Sprintf("SP%d-%d-%d", matched.ID, start.Unix(), end.Unix())
-
-	if err := s.executor.Execute(ctx, &executor.ExecuteRequest{
-		MerchantID:    merchantID,
-		OrderNo:       batchNo,
-		SourceWallet:  merchantWallet.ID,
-		Allocations:   allocations,
-		RuleID:        matched.ID,
-		IdempotencyKey: "split",
-		TraceID:       "",
-	}); err != nil {
-		return nil, errs.Wrap(errs.CodeInternalError, "split execute failed", 200, err)
+	// 5. 创建每日执行记录（RUNNING）
+	startedAt := time.Now()
+	var runID string
+	var dailyExecID uint64
+	if s.dailyExecRepo != nil {
+		bizDate := start
+		runID = fmt.Sprintf("SP_RUN-%d-%s-%d", merchantID, batchNo, startedAt.UnixNano())
+		m := &repository.DailyExecutionModel{
+			RunID:      runID,
+			MerchantID: merchantID,
+			BizDate:    bizDate,
+			BatchNo:    batchNo,
+			Status:     repository.DailyExecRunning,
+		}
+		created, cErr := s.dailyExecRepo.CreateWithRunID(ctx, m)
+		if cErr != nil {
+			s.logger.Warn("create daily exec fail", zap.String("run_id", runID), zap.Error(cErr))
+		} else if created != nil {
+			dailyExecID = created.ID
+		}
 	}
 
-	// 落地一条已执行分账单，记录覆盖订单号，供后续分账排除已分账订单（避免重复分账）。
-	// 幂等：同时间段+规则重复执行时批次号相同，Create 命中唯一键冲突则忽略。
+	// 6. executor.Execute（内部自治，不外层包事务）
+	execErr := s.executor.Execute(ctx, &executor.ExecuteRequest{
+		MerchantID:     merchantID,
+		OrderNo:        batchNo,
+		SourceWallet:   merchantWallet.ID,
+		Allocations:    allocations,
+		RuleID:         matched.ID,
+		IdempotencyKey: "split",
+		TraceID:        "",
+	})
+
+	// 7. 反查事实（V2 评审要点 🔴4）：从 t_split_execution 真实状态判定终态
+	durationMs := int(time.Since(startedAt) / time.Millisecond)
+	var finalStatus string
+	var errCode, errMsg string
+	var diffID *uint64
+	if execErr != nil {
+		finalStatus = repository.DailyExecFailed
+		errCode = errs.CodeInternalError
+		errMsg = truncateMsg(execErr.Error())
+	} else {
+		// 读事实：分账明细
+		receivers, rErr := s.readExecutionFacts(ctx, batchNo)
+		if rErr != nil {
+			finalStatus = repository.DailyExecFailed
+			errCode = errs.CodeInternalError
+			errMsg = truncateMsg(rErr.Error())
+		} else {
+			success, total2 := countReceivers(receivers)
+			switch {
+			case total2 == 0:
+				finalStatus = repository.DailyExecFailed
+				errCode = errs.CodeInternalError
+				errMsg = "no split executions"
+			case success == total2:
+				finalStatus = repository.DailyExecSuccess
+			case success == 0:
+				finalStatus = repository.DailyExecFailed
+			default:
+				finalStatus = repository.DailyExecPartial
+			}
+		}
+	}
+
+	// 8. 更新每日执行记录
+	if s.dailyExecRepo != nil && dailyExecID > 0 {
+		_ = s.dailyExecRepo.MarkStatus(ctx, dailyExecID, finalStatus, errCode, errMsg, diffID, durationMs)
+	}
+	prom.SplitDailyExecTotal.WithLabelValues(finalStatus).Inc()
+	prom.SplitDailyExecDuration.Observe(float64(durationMs))
+
+	// 9. 审计
+	if s.auditRepo != nil {
+		action := repository.AuditActionExecute
+		if finalStatus != repository.DailyExecSuccess {
+			action = repository.AuditActionExecuteFailed
+		}
+		_ = s.auditRepo.WriteAction(ctx, repository.AuditBizTypeDailySplit, batchNo, action,
+			repository.AuditOperatorSystem, 0,
+			map[string]any{"status": finalStatus, "duration_ms": durationMs, "error": errMsg})
+	}
+
+	if execErr != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "split execute failed", 200, execErr)
+	}
+
+	// 10. 落地分账单 + 关联表
 	now := time.Now()
+	bizDates := collectBizDates(start, end)
 	detailJSON, _ := json.Marshal(allocationsToItems(allocations))
+	bizDatesJSON, _ := json.Marshal(bizDates)
 	executedBill := &repository.SplitBillModel{
 		BatchNo:     batchNo,
 		MerchantID:  merchantID,
@@ -231,13 +388,48 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		TotalAmount: total,
 		Detail:      string(detailJSON),
 		OrderNos:    string(orderNosJSON),
+		BizDates:    string(bizDatesJSON),
 		Status:      repository.BillExecuted,
 		ApprovedAt:  &now,
 		ExecutedAt:  &now,
 	}
+	billID := uint64(0)
 	if err := s.billRepo.Create(ctx, executedBill); err != nil {
 		s.logger.Warn("record executed split bill failed",
 			zap.String("batch_no", batchNo), zap.Error(err))
+	} else {
+		billID = executedBill.ID
+	}
+	if s.billBizDateRepo != nil && billID > 0 {
+		if err := s.billBizDateRepo.Bind(ctx, billID, bizDates); err != nil {
+			s.logger.Warn("bind bill biz date fail",
+				zap.String("batch_no", batchNo), zap.Error(err))
+		}
+	}
+
+	// 11. 回填所属批次号，供门店订单明细按批次号关联查询
+	if err := s.fillSplitBatchNo(ctx, merchantID, batchNo, orderNos); err != nil {
+		s.logger.Warn("backfill split batch no fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
+	// 11.1 批次已执行，统一回写订单分账状态为 SUCCESS（保证交易明细口径一致）
+	if err := s.billRepo.MarkOrdersSplit(ctx, merchantID, batchNo); err != nil {
+		s.logger.Warn("mark orders split fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
+
+	// 12. 触发异步汇总：每个 biz_date 跑一次（V2 评审要点 🔴6）
+	if s.statsSvc != nil {
+		go func() {
+			for _, bd := range bizDates {
+				if _, err := s.statsSvc.RecomputeSplitStatus(context.Background(), merchantID, bd); err != nil {
+					s.logger.Warn("async recompute split status fail",
+						zap.Uint64("merchant", merchantID),
+						zap.Time("biz_date", bd),
+						zap.Error(err))
+				}
+			}
+		}()
 	}
 
 	return &ExecuteByPeriodResponse{
@@ -246,6 +438,83 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		RuleCode:    matched.RuleCode,
 		Allocations: allocations,
 	}, nil
+}
+
+// readExecutionFacts 反查 t_split_execution 真实状态（V2 评审要点 🔴4：避免扩展 Executor 返回契约）。
+func (s *Service) readExecutionFacts(ctx context.Context, orderNo string) ([]SplitExecutionRow, error) {
+	type row struct {
+		Status string `gorm:"column:status"`
+	}
+	var rows []row
+	q := `SELECT status FROM t_split_execution WHERE order_no = ?`
+	if err := s.billRepo.DB().WithContext(ctx).Raw(q, orderNo).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]SplitExecutionRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SplitExecutionRow{Status: r.Status})
+	}
+	return out, nil
+}
+
+// SplitExecutionRow 反查辅助结构。
+type SplitExecutionRow struct {
+	Status string
+}
+
+func countReceivers(rows []SplitExecutionRow) (success, total int) {
+	total = len(rows)
+	for _, r := range rows {
+		if r.Status == "SUCCESS" {
+			success++
+		}
+	}
+	return
+}
+
+// recordFailedDailyExec Prechecker 失败时写每日执行记录。
+func (s *Service) recordFailedDailyExec(ctx context.Context, merchantID uint64, bizDate time.Time, batchNo string, cause error, diffID *uint64) {
+	if s.dailyExecRepo == nil {
+		return
+	}
+	bizCode := ""
+	msg := ""
+	if cause != nil {
+		bizCode = "RECONCILE_FAILED"
+		msg = truncateMsg(cause.Error())
+	}
+	runID := fmt.Sprintf("SP_RUN-FAIL-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
+	m := &repository.DailyExecutionModel{
+		RunID:           runID,
+		MerchantID:      merchantID,
+		BizDate:         bizDate,
+		BatchNo:         batchNo,
+		Status:          repository.DailyExecFailed,
+		ErrorCode:       &bizCode,
+		ErrorMessage:    &msg,
+		ReconcileDiffID: diffID,
+	}
+	if created, err := s.dailyExecRepo.CreateWithRunID(ctx, m); err == nil && created != nil {
+		_ = s.dailyExecRepo.MarkStatus(ctx, created.ID, repository.DailyExecFailed, bizCode, msg, diffID, 0)
+	}
+}
+
+// collectBizDates 收集 [start, end) 区间内每个自然日（按本地时区）。
+func collectBizDates(start, end time.Time) []time.Time {
+	out := []time.Time{}
+	for d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local); d.Before(end); d = d.AddDate(0, 0, 1) {
+		out = append(out, d)
+	}
+	return out
+}
+
+// truncateMsg 截断错误信息至 1000 字符（V2 评审要点 🟡20）。
+func truncateMsg(s string) string {
+	const max = 1000
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
 }
 
 // buildAllocationsPeriod 将规则分配方案换算为金额执行单元（门店占比基于时间段 [start, end] 实收）。
@@ -375,6 +644,8 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 	}
 
 	batchNo := fmt.Sprintf("SP%d-%d-%d", matched.ID, start.Unix(), end.Unix())
+	bizDates := collectBizDates(start, end)
+	bizDatesJSON, _ := json.Marshal(bizDates)
 	m := &repository.SplitBillModel{
 		BatchNo:     batchNo,
 		MerchantID:  merchantID,
@@ -385,10 +656,22 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 		TotalAmount: total,
 		Detail:      string(detailJSON),
 		OrderNos:    string(orderNosJSON),
+		BizDates:    string(bizDatesJSON),
 		Status:      repository.BillPending,
 	}
 	if err := s.billRepo.Create(ctx, m); err != nil {
+		s.logger.Error("create split bill failed",
+			zap.String("batch_no", batchNo), zap.Error(err))
 		return nil, errs.Wrap(errs.CodeInternalError, "create split bill failed", 200, err)
+	}
+	// 绑定账单覆盖的业务日期（供按日过滤/排除已分账订单）
+	if s.billBizDateRepo != nil {
+		_ = s.billBizDateRepo.Bind(ctx, m.ID, bizDates)
+	}
+	// 回填所属批次号，供门店订单明细按批次号关联查询
+	if err := s.fillSplitBatchNo(ctx, merchantID, batchNo, orderNos); err != nil {
+		s.logger.Warn("backfill split batch no fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
 	}
 	return billToDTO(m), nil
 }
@@ -520,6 +803,27 @@ func (s *Service) BillStoreSummary(ctx context.Context, merchantID uint64, batch
 	}, nil
 }
 
+// fillSplitBatchNo 将分账批次号回填到覆盖订单（供「门店订单明细」按批次号关联查询）。
+// 仅回填尚未归属批次(split_batch_no IS NULL)的订单，避免覆盖已分账订单。
+func (s *Service) fillSplitBatchNo(ctx context.Context, merchantID uint64, batchNo string, orderNos []string) error {
+	if s.billRepo == nil || len(orderNos) == 0 {
+		return nil
+	}
+	return s.billRepo.DB().WithContext(ctx).Table("t_order").
+		Where("merchant_id = ? AND order_no IN ? AND deleted_at IS NULL AND split_batch_no IS NULL", merchantID, orderNos).
+		Update("split_batch_no", batchNo).Error
+}
+
+// releaseSplitBatchNo 驳回分账单时释放批次号（该批次订单可被后续重新分账）。
+func (s *Service) releaseSplitBatchNo(ctx context.Context, merchantID uint64, batchNo string) error {
+	if s.billRepo == nil {
+		return nil
+	}
+	return s.billRepo.DB().WithContext(ctx).Table("t_order").
+		Where("merchant_id = ? AND split_batch_no = ?", merchantID, batchNo).
+		Update("split_batch_no", nil).Error
+}
+
 // BillStoreOrders 查询某分账批次号下某门店对应的订单交易明细。
 func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchNo string, storeID uint64) (*BillStoreOrders, error) {
 	if s.billRepo == nil {
@@ -535,8 +839,6 @@ func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchN
 	if bill == nil || bill.Status == repository.BillRejected {
 		return nil, errs.New(errs.CodeInvalidParams, "split bill not found", 200)
 	}
-	var orderNos []string
-	_ = json.Unmarshal([]byte(bill.OrderNos), &orderNos)
 	storeName := ""
 	if n, err := s.billRepo.GetStoreNames(ctx, []uint64{storeID}); err == nil {
 		storeName = n[storeID]
@@ -548,14 +850,13 @@ func (s *Service) BillStoreOrders(ctx context.Context, merchantID uint64, batchN
 		PaidAt  *time.Time
 	}
 	var rows []row
-	if len(orderNos) > 0 {
-		if err := s.billRepo.DB().WithContext(ctx).Table("t_order").
-			Select("order_no, amount, status, paid_at").
-			Where("merchant_id = ? AND store_id = ? AND order_no IN ? AND deleted_at IS NULL", merchantID, storeID, orderNos).
-			Order("created_at DESC").
-			Scan(&rows).Error; err != nil {
-			return nil, errs.Wrap(errs.CodeInternalError, "query store orders failed", 200, err)
-		}
+	// 按批次号 + 门店关联查询（走 idx_split_batch 索引），替代 order_no IN (order_nos) 大列表反查。
+	if err := s.billRepo.DB().WithContext(ctx).Table("t_order").
+		Select("order_no, amount, status, paid_at").
+		Where("merchant_id = ? AND split_batch_no = ? AND store_id = ? AND deleted_at IS NULL", merchantID, batchNo, storeID).
+		Order("created_at DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query store orders failed", 200, err)
 	}
 	orders := make([]BillStoreOrder, 0, len(rows))
 	for _, r := range rows {
@@ -622,6 +923,11 @@ func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo st
 		return nil, errs.New(errs.CodeInvalidParams, "bill already processed by another request", 200)
 	}
 	s.appendAudit(ctx, "BILL", batchNo, "APPROVE", merchantID, map[string]any{"total_amount": bill.TotalAmount})
+	// 批次模式统一回写订单分账状态，保证交易明细口径一致
+	if err := s.billRepo.MarkOrdersSplit(ctx, merchantID, batchNo); err != nil {
+		s.logger.Warn("mark orders split fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
 	bill.Status = repository.BillExecuted
 	bill.ApprovedAt = &now
 	bill.ExecutedAt = &now
@@ -641,6 +947,16 @@ func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo str
 	if !ok {
 		return nil, errs.New(errs.CodeInvalidParams, "bill already processed by another request", 200)
 	}
+	// 驳回后释放批次号，该批次覆盖订单可被后续重新分账
+	if err := s.releaseSplitBatchNo(ctx, merchantID, batchNo); err != nil {
+		s.logger.Warn("release split batch no fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
+	// 复位订单分账状态为 PENDING，保证交易明细口径一致
+	if err := s.billRepo.ResetOrdersSplit(ctx, merchantID, batchNo); err != nil {
+		s.logger.Warn("reset orders split fail",
+			zap.String("batch_no", batchNo), zap.Error(err))
+	}
 	s.appendAudit(ctx, "BILL", batchNo, "REJECT", merchantID, nil)
 	bill.Status = repository.BillRejected
 	return billToDTO(bill), nil
@@ -651,19 +967,24 @@ func (s *Service) appendAudit(ctx context.Context, bizType, bizID, action string
 	if s.auditRepo == nil {
 		return
 	}
-	detailJSON := ""
+	var detailJSON *string // nil 写 NULL（JSON 列不接受空字符串，否则静默插入失败）
 	if detail != nil {
-		b, _ := json.Marshal(detail)
-		detailJSON = string(b)
+		if b, err := json.Marshal(detail); err == nil {
+			str := string(b)
+			detailJSON = &str
+		}
 	}
-	_ = s.auditRepo.Append(ctx, &repository.SplitAuditModel{
+	if err := s.auditRepo.Append(ctx, &repository.SplitAuditModel{
 		BizType:      bizType,
 		BizID:        bizID,
 		Action:       action,
 		OperatorType: "MERCHANT",
 		OperatorID:   operatorID,
 		Detail:       detailJSON,
-	})
+	}); err != nil {
+		s.logger.Warn("append split audit fail",
+			zap.String("biz_type", bizType), zap.String("biz_id", bizID), zap.String("action", action), zap.Error(err))
+	}
 }
 
 // getPendingBill 查询待审批账单（校验状态）。
@@ -1429,4 +1750,201 @@ func (s *Service) RetryExecution(ctx context.Context, merchantID uint64, orderNo
 		}
 	}
 	return &RetryResult{OrderNo: orderNo, Success: success, Failed: failed, Retried: len(allocations)}, nil
+}
+
+// ============ 差错中心 ============
+
+// ExceptionItem 差错中心异常订单行。
+type ExceptionItem struct {
+	OrderNo       string     `json:"order_no"`
+	RuleID        *uint64    `json:"rule_id"`
+	TotalAmount   int64      `json:"total_amount"`
+	ReceiverCount int        `json:"receiver_count"`
+	SuccessCount  int        `json:"success_count"`
+	Status        string     `json:"status"`
+	AttemptCount  int        `json:"attempt_count"`
+	NextRetryAt   *time.Time `json:"next_retry_at"`
+	Degraded      int        `json:"degraded"`
+	LastError     string     `json:"last_error"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// ExceptionPage 异常订单分页。
+type ExceptionPage struct {
+	Items []ExceptionItem `json:"items"`
+	Total int64           `json:"total"`
+	Page  int             `json:"page"`
+	Size  int             `json:"size"`
+}
+
+// ListExceptions 差错中心异常订单聚合查询（FAILED/PARTIAL/SUSPENDED/DEAD/RESOLVED 或降级订单）。
+func (s *Service) ListExceptions(ctx context.Context, merchantID uint64, status string, degraded *int, page, size int) (*ExceptionPage, error) {
+	if s.orderStatusRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "split order status repo not configured", 500)
+	}
+	rows, total, err := s.orderStatusRepo.ListExceptions(ctx, merchantID, status, degraded, (page-1)*size, size)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split exceptions failed", 200, err)
+	}
+	items := make([]ExceptionItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, ExceptionItem{
+			OrderNo:       r.OrderNo,
+			RuleID:        r.RuleID,
+			TotalAmount:   r.TotalAmount,
+			ReceiverCount: r.ReceiverCount,
+			SuccessCount:  r.SuccessCount,
+			Status:        r.Status,
+			AttemptCount:  r.AttemptCount,
+			NextRetryAt:   r.NextRetryAt,
+			Degraded:      r.Degraded,
+			LastError:     r.LastError,
+			CreatedAt:     r.CreatedAt,
+			UpdatedAt:     r.UpdatedAt,
+		})
+	}
+	return &ExceptionPage{Items: items, Total: total, Page: page, Size: size}, nil
+}
+
+// ReopenExecution 死单复位重开：DEAD → FAILED 并清零重试计数，交由补偿调度自动重入。
+func (s *Service) ReopenExecution(ctx context.Context, merchantID uint64, orderNo string) error {
+	if s.orderStatusRepo == nil {
+		return errs.New(errs.CodeInternalError, "split order status repo not configured", 500)
+	}
+	st, err := s.orderStatusRepo.Get(ctx, orderNo)
+	if err != nil {
+		return errs.Wrap(errs.CodeInternalError, "query split order status failed", 200, err)
+	}
+	if st == nil || st.MerchantID != merchantID {
+		return errs.New(errs.CodeInvalidParams, "split execution not found", 200)
+	}
+	if st.Status != repository.OrderStatusDead {
+		return errs.New(errs.CodeInvalidParams, "仅重试耗尽（DEAD）的订单可复位重开", 200)
+	}
+	ok, err := s.orderStatusRepo.Reopen(ctx, orderNo)
+	if err != nil {
+		return errs.Wrap(errs.CodeInternalError, "reopen split execution failed", 200, err)
+	}
+	if !ok {
+		return errs.New(errs.CodeInvalidParams, "订单状态已变化，请刷新后重试", 200)
+	}
+	s.appendAudit(ctx, repository.AuditBizTypeSplitExec, orderNo, repository.AuditActionReopen, merchantID, nil)
+	return nil
+}
+
+// AuditItem 审计日志行。
+type AuditItem struct {
+	ID           uint64    `json:"id"`
+	BizType      string    `json:"biz_type"`
+	BizID        string    `json:"biz_id"`
+	Action       string    `json:"action"`
+	OperatorType string    `json:"operator_type"`
+	OperatorID   uint64    `json:"operator_id"`
+	Detail       string    `json:"detail"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// AuditPage 审计日志分页。
+type AuditPage struct {
+	Items []AuditItem `json:"items"`
+	Total int64       `json:"total"`
+	Page  int         `json:"page"`
+	Size  int         `json:"size"`
+}
+
+// ListAudits 商户端审计查询：biz_id 必填且强制校验归属（防越权查他商户审计）。
+func (s *Service) ListAudits(ctx context.Context, merchantID uint64, bizType, bizID string, page, size int) (*AuditPage, error) {
+	if s.auditRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "split audit repo not configured", 500)
+	}
+	if bizID == "" {
+		return nil, errs.New(errs.CodeInvalidParams, "biz_id required", 200)
+	}
+	owned, err := s.ownsBizID(ctx, merchantID, bizID)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "check biz ownership failed", 200, err)
+	}
+	if !owned {
+		return nil, errs.New(errs.CodeInvalidParams, "biz not found", 200)
+	}
+	rows, total, err := s.auditRepo.List(ctx, bizType, bizID, "", (page-1)*size, size)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query split audit failed", 200, err)
+	}
+	items := make([]AuditItem, 0, len(rows))
+	for _, r := range rows {
+		var detail string
+		if r.Detail != nil {
+			detail = *r.Detail
+		}
+		items = append(items, AuditItem{
+			ID: r.ID, BizType: r.BizType, BizID: r.BizID, Action: r.Action,
+			OperatorType: r.OperatorType, OperatorID: r.OperatorID,
+			Detail: detail, CreatedAt: r.CreatedAt,
+		})
+	}
+	return &AuditPage{Items: items, Total: total, Page: page, Size: size}, nil
+}
+
+// ownsBizID 校验 biz_id（订单号/批次号）归属当前商户。
+func (s *Service) ownsBizID(ctx context.Context, merchantID uint64, bizID string) (bool, error) {
+	// 订单级分账状态表自带 merchant_id，优先命中
+	if s.orderStatusRepo != nil {
+		st, err := s.orderStatusRepo.Get(ctx, bizID)
+		if err != nil {
+			return false, err
+		}
+		if st != nil {
+			return st.MerchantID == merchantID, nil
+		}
+	}
+	// 其次按交易订单 / 分账单批次归属判定
+	var count int64
+	err := s.diffRepo.DB().WithContext(ctx).Raw(
+		`SELECT
+			(SELECT COUNT(*) FROM t_order WHERE order_no = ? AND merchant_id = ? AND deleted_at IS NULL)
+			+ (SELECT COUNT(*) FROM t_split_bill WHERE batch_no = ? AND merchant_id = ?)`,
+		bizID, merchantID, bizID, merchantID,
+	).Scan(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// DiffPage 对账差异分页。
+type DiffPage struct {
+	Items []repository.ReconcileDiffModel `json:"items"`
+	Total int64                          `json:"total"`
+	Page  int                            `json:"page"`
+	Size  int                            `json:"size"`
+}
+
+// ListReconcileDiffs 商户端对账差异分页查询（强制商户隔离，支持类型/核销状态过滤）。
+func (s *Service) ListReconcileDiffs(ctx context.Context, merchantID uint64, diffType string, resolved *bool, start, end time.Time, page, size int) (*DiffPage, error) {
+	if s.diffRepo == nil {
+		return nil, errs.New(errs.CodeInternalError, "reconcile diff repo not configured", 500)
+	}
+	rows, total, err := s.diffRepo.ListForMerchant(ctx, merchantID, diffType, resolved, start, end, (page-1)*size, size)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, "query reconcile diffs failed", 200, err)
+	}
+	return &DiffPage{Items: rows, Total: total, Page: page, Size: size}, nil
+}
+
+// ResolveReconcileDiff 核销对账差异（乐观锁 + 审计留痕）。
+func (s *Service) ResolveReconcileDiff(ctx context.Context, merchantID, id uint64) error {
+	if s.diffRepo == nil {
+		return errs.New(errs.CodeInternalError, "reconcile diff repo not configured", 500)
+	}
+	ok, err := s.diffRepo.Resolve(ctx, id, merchantID)
+	if err != nil {
+		return errs.Wrap(errs.CodeInternalError, "resolve reconcile diff failed", 200, err)
+	}
+	if !ok {
+		return errs.New(errs.CodeInvalidParams, "差异不存在或已核销", 200)
+	}
+	s.appendAudit(ctx, repository.AuditBizTypeReconcileDiff, fmt.Sprintf("%d", id), repository.AuditActionResolve, merchantID, nil)
+	return nil
 }

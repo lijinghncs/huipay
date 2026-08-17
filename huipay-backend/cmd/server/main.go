@@ -18,6 +18,7 @@ import (
 	"github.com/huipay/huipay-backend/infra/config"
 	"github.com/huipay/huipay-backend/infra/db"
 	"github.com/huipay/huipay-backend/infra/errs"
+	"github.com/huipay/huipay-backend/infra/notify"
 	"github.com/huipay/huipay-backend/infra/idem"
 	"github.com/huipay/huipay-backend/infra/obs"
 	"github.com/huipay/huipay-backend/infra/prom"
@@ -62,6 +63,14 @@ import (
 	splitexec "github.com/huipay/huipay-backend/internal/split/executor"
 	splitsched "github.com/huipay/huipay-backend/internal/split/scheduler"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
+	recon "github.com/huipay/huipay-backend/internal/split/recon"
+
+	statsrepo "github.com/huipay/huipay-backend/internal/stats/repository"
+	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
+	statsscheduler "github.com/huipay/huipay-backend/internal/stats/scheduler"
+
+	adminservice "github.com/huipay/huipay-backend/internal/admin/service"
+	adminhandler "github.com/huipay/huipay-backend/internal/admin/handler"
 )
 
 // toObsFileLog 将配置的日志文件配置转换为 obs 日志文件配置。
@@ -221,10 +230,47 @@ func main() {
 	splitOrderStatusRepo := splitrepo.NewSplitOrderStatusRepo(dbConn.Master)
 	splitAuditRepo := splitrepo.NewSplitAuditRepo(dbConn.Master)
 	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, splitOrderStatusRepo, paymentRouter, logger)
+	// 告警器（企业微信 webhook；alert_webhook_url 空配置时为空操作）
+	alerter := notify.New(cfg.AlertWebhookURL, logger)
+	splitExec.SetAlerter(alerter)
 	splitRuleRepo := splitrepo.NewSplitRuleRepo(dbConn.Master)
 	splitBillRepo := splitrepo.NewSplitBillRepo(dbConn.Master)
+	splitBillBizDateRepo := splitrepo.NewBillBizDateRepo(dbConn.Master)
+	splitDailyExecRepo := splitrepo.NewDailyExecutionRepo(dbConn.Master)
+	splitDiffRepo := splitrepo.NewReconcileDiffRepo(dbConn.Master)
 	splitRevenueRepo := splitrepo.NewStoreRevenueRepo(dbConn.Master)
-	splitSvc := splitservice.NewService(ruleEngine, splitExec, splitRuleRepo, splitBillRepo, splitAuditRepo, accountSvc, splitRevenueRepo, logger)
+
+	// 门店订单日报服务（T+1 02:00 聚合）
+	statsRepo := statsrepo.NewStoreDailyStatsRepo(dbConn.Master)
+	statsSvc := statsservice.NewService(statsRepo, dbConn.Master, logger)
+
+	// 分账前置对账器（依赖 statsSvc 自动补跑 + 差异落库）
+	prechecker := recon.NewPrechecker(dbConn.Master, statsSvc, splitDiffRepo, splitAuditRepo, logger)
+
+	splitSvc := splitservice.NewService(
+		ruleEngine, splitExec,
+		splitRuleRepo, splitBillRepo,
+		splitBillBizDateRepo, splitDailyExecRepo, splitDiffRepo,
+		splitAuditRepo, splitOrderStatusRepo,
+		accountSvc, splitRevenueRepo,
+		prechecker, statsSvc,
+		logger,
+	)
+
+	// 管理后台：调度监测 + 门店日报报表 + 分账管理（每日执行/审计/差异/重算重置）
+	adminSchedulerSvc := adminservice.NewSchedulerService(dbConn.Master, logger)
+	adminSchedulerH := adminhandler.NewSchedulerHandler(adminSchedulerSvc, logger)
+	adminStoreStatsH := adminhandler.NewStoreStatsHandler(statsSvc, logger)
+	adminSplitManageSvc := adminservice.NewSplitManageService(
+		dbConn.Master, splitDailyExecRepo, splitAuditRepo, splitDiffRepo, statsSvc, logger,
+	)
+	adminSplitManageH := adminhandler.NewSplitManageHandler(adminSplitManageSvc, logger)
+	adminAuthSvc := adminservice.NewAdminAuthService(cfg.AdminUsername, cfg.AdminPassword, cfg.AuthSecret, logger)
+	adminAuthH := adminhandler.NewAdminAuthHandler(adminAuthSvc, logger)
+
+	// 商户自助：门店日报统计 + 定时任务监测（只读）
+	merchantStoreStatsH := merchanthandler.NewStoreStatsHandler(statsSvc, logger)
+	merchantSchedulerH := merchanthandler.NewSchedulerHandler(adminSchedulerSvc, logger)
 
 	// 门店服务
 	storeSvc := storeservice.NewService(storeRepo, logger)
@@ -241,6 +287,7 @@ func main() {
 	r.Use(errs.GinErrorHandler(logger))
 	r.Use(middleware.CORS())
 	r.Use(middleware.NewMerchantAuth(cfg.AuthSecret, cfg.TrustMerchantHeader))
+	r.Use(middleware.NewAdminAuth(cfg.AuthSecret))
 
 	// 7. 注册路由
 	orderH := orderhandler.New(orderSvc, logger)
@@ -299,6 +346,15 @@ func main() {
 		v1.GET("/merchant/split/executions", splitH.ListExecutions)
 		v1.GET("/merchant/split/executions/:order_no", splitH.GetExecutionDetail)
 		v1.POST("/merchant/split/executions/:order_no/retry", splitH.RetryExecution)
+		v1.POST("/merchant/split/executions/:order_no/reopen", splitH.ReopenExecution)
+		// 差错中心：异常订单聚合 / 审计查询 / 对账差异与核销
+		v1.GET("/merchant/split/exceptions", splitH.ListExceptions)
+		v1.GET("/merchant/split/audit", splitH.ListAudits)
+		v1.GET("/merchant/split/reconcile-diffs", splitH.ListReconcileDiffs)
+		v1.POST("/merchant/split/reconcile-diffs/:id/resolve", splitH.ResolveReconcileDiff)
+
+		// 管理后台登录（无需鉴权）
+		v1.POST("/admin/login", adminAuthH.Login)
 
 		// 管理后台：商户进件、列表、详情、更新、状态、概览
 		v1.POST("/admin/merchants", merchantH.Onboard)
@@ -310,6 +366,30 @@ func main() {
 		v1.GET("/admin/merchants/:id/overview", merchantH.Overview)
 		v1.GET("/admin/merchants/:id/wechat-config", merchantH.GetWechatConfig)
 		v1.PUT("/admin/merchants/:id/wechat-config", merchantH.UpdateWechatConfig)
+
+		// 管理后台：门店日报报表（admin 路由暂未接入鉴权，TODO 下轮统一）
+		v1.GET("/admin/store-stats", adminStoreStatsH.ListStoreStats)
+		v1.GET("/admin/store-stats/summary", adminStoreStatsH.StoreStatsSummary)
+		v1.POST("/admin/store-stats/backfill", adminStoreStatsH.Backfill)
+		v1.GET("/admin/stores/:id/daily-stats", adminStoreStatsH.GetStoreDailyStats)
+
+		// 管理后台：定时任务监测（admin 路由暂未接入鉴权，TODO 下轮统一）
+		v1.GET("/admin/scheduler/tasks", adminSchedulerH.ListTasks)
+		v1.GET("/admin/scheduler/runs", adminSchedulerH.ListRuns)
+		v1.GET("/admin/scheduler/runs/:id", adminSchedulerH.GetRun)
+		v1.POST("/admin/scheduler/tasks/:name/run", adminSchedulerH.TriggerTask)
+
+		// 管理后台：分账管理（每日执行/审计/对账差异/重算重置）
+		v1.GET("/admin/split/daily-executions", adminSplitManageH.ListDailyExecutions)
+		v1.GET("/admin/split/daily-executions/:id", adminSplitManageH.GetDailyExecution)
+		v1.GET("/admin/split/audit", adminSplitManageH.ListAudits)
+		v1.GET("/admin/reconcile-diffs", adminSplitManageH.ListDiffs)
+		v1.POST("/admin/split/executions/:order_no/resolve", adminSplitManageH.ResolveExecution)
+		v1.POST("/admin/split/executions/:order_no/reopen", adminSplitManageH.ReopenExecution)
+		v1.GET("/admin/split/exceptions", adminSplitManageH.ListExceptions)
+		v1.POST("/admin/reconcile-diffs/:id/resolve", adminSplitManageH.ResolveReconcileDiff)
+		v1.POST("/admin/store-stats/recompute", adminSplitManageH.RecomputeStoreStats)
+		v1.POST("/admin/store-stats/reset-split-status", adminSplitManageH.ResetStoreSplitStatus)
 
 		// 收款码牌：商户侧自助管理
 		v1.POST("/merchant/codes", paymentCodeH.Create)
@@ -336,6 +416,17 @@ func main() {
 		// 商户自助：当前商户资料与经营概览（读 X-Merchant-Id 中间件）
 		v1.GET("/merchant/profile", merchantH.SelfProfile)
 		v1.GET("/merchant/overview", merchantH.SelfOverview)
+
+		// 商户自助：门店日报统计（按当前商户过滤）
+		v1.GET("/merchant/store-stats", merchantStoreStatsH.ListStats)
+		v1.GET("/merchant/store-stats/summary", merchantStoreStatsH.Summary)
+		v1.GET("/merchant/store-stats/stores/:id/daily", merchantStoreStatsH.GetDailyStats)
+
+		// 商户自助：定时任务监测（任务列表 + 运行日志 + 手动执行）
+		v1.GET("/merchant/scheduler/tasks", merchantSchedulerH.ListTasks)
+		v1.GET("/merchant/scheduler/runs", merchantSchedulerH.ListRuns)
+		v1.GET("/merchant/scheduler/runs/:id", merchantSchedulerH.GetRun)
+		v1.POST("/merchant/scheduler/tasks/:name/run", merchantSchedulerH.TriggerTask)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -343,7 +434,7 @@ func main() {
 	})
 	r.GET("/metrics", prom.Handler())
 
-	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账 + 分账补偿）
+	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账 + 分账补偿 + 门店订单日报 + 分账日对账）
 	if dbConn.Master != nil {
 		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, wxManager, 30*time.Second, logger).Start(context.Background())
 		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
@@ -351,7 +442,19 @@ func main() {
 			go reconcilesched.StartDailyReconcile(context.Background(), billDownloader, dbConn.Master, logger)
 		}
 		// 分账补偿调度：悬挂检测 + 失败/部分失败订单自动重入（30s 轮询）
-		go splitsched.NewCompensateScheduler(splitOrderStatusRepo, splitExec, accountSvc, logger).Start(context.Background(), 30*time.Second)
+		compSched := splitsched.NewCompensateScheduler(splitOrderStatusRepo, splitExec, accountSvc, logger)
+		compSched.SetAlerter(alerter)
+		go compSched.Start(context.Background(), 30*time.Second)
+		// split_status 异步汇总调度：扫 t_split_execution 变更增量回算门店×日分账状态（10 分钟轮询）
+		go splitsched.NewRecomputeScheduler(dbConn.Master, statsSvc, logger).Start(context.Background())
+		// 门店订单日报：T+1 02:00 聚合 T 日订单（接入监测框架）
+		statsHandle := statsscheduler.NewStoreDailyStatsScheduler(dbConn.Master, statsSvc, logger)
+		go statsHandle.Start(context.Background(), statsscheduler.Runnable(statsSvc), statsscheduler.Options())
+		// 分账日对账：T+1 02:30 比对本地账本与执行记录，差异落库 + 告警（接入监测框架，支持手动触发）
+		reconcileHandle := splitsched.NewSplitReconcileScheduler(dbConn.Master, splitDiffRepo, alerter, logger)
+		go reconcileHandle.Start(context.Background(),
+			splitsched.ReconcileRunnable(dbConn.Master, splitDiffRepo, alerter, logger),
+			splitsched.ReconcileOptions())
 	}
 
 	// 9. 启动服务并优雅退出

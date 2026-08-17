@@ -13,6 +13,7 @@ import (
 	"github.com/huipay/huipay-backend/internal/order/model"
 	"github.com/huipay/huipay-backend/internal/payment/channel"
 	"github.com/huipay/huipay-backend/internal/payment/router"
+	"github.com/huipay/huipay-backend/internal/scheduler/framework"
 )
 
 // MerchantAdapterResolver 按商户解析通道适配器（商户级微信配置生效；nil 表示走平台通道）。
@@ -31,6 +32,14 @@ type CloseExpiredScheduler struct {
 
 // NewCloseExpiredScheduler 构造调度器。
 func NewCloseExpiredScheduler(db *gorm.DB, r *router.Router, merchantAdapters MerchantAdapterResolver, interval time.Duration, logger *zap.Logger) *CloseExpiredScheduler {
+	// 注册到监测注册表（保留自有 ticker，仅登记元信息）
+	_ = framework.Register(db, logger, framework.TaskConfig{
+		Name:        "order_close_expired",
+		DisplayName: "超时关单",
+		Description: "扫描过期未支付订单并关闭",
+		IntervalSec: int(interval.Seconds()),
+		Enabled:     true,
+	})
 	return &CloseExpiredScheduler{db: db, router: r, merchantAdapters: merchantAdapters, logger: logger, interval: interval}
 }
 
@@ -49,12 +58,14 @@ func (s *CloseExpiredScheduler) Start(ctx context.Context) {
 }
 
 func (s *CloseExpiredScheduler) runOnce(ctx context.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Error("close expired scheduler panic", zap.Any("panic", r))
-		}
-	}()
+	// 接入监测：name=order_close_expired，每轮写运行日志（RUNNING→SUCCESS/FAILED）
+	_, _ = framework.RunLogged(ctx, s.db, framework.GlobalInstanceID(), "order_close_expired", nil, func() (int64, error) {
+		return s.scanAndClose(ctx)
+	})
+}
 
+// scanAndClose 扫描并关闭过期订单，返回关闭数。
+func (s *CloseExpiredScheduler) scanAndClose(ctx context.Context) (int64, error) {
 	var rows []model.OrderModel
 	if err := s.db.WithContext(ctx).
 		Select("order_no", "merchant_id", "channel").
@@ -62,9 +73,10 @@ func (s *CloseExpiredScheduler) runOnce(ctx context.Context) {
 		Limit(100).
 		Find(&rows).Error; err != nil {
 		s.logger.Error("close expired scan fail", zap.Error(err))
-		return
+		return 0, err
 	}
 
+	var closed int64
 	for _, o := range rows {
 		// 先调通道关单（失败仅 log，不影响 DB 关单）
 		if o.Channel != "" {
@@ -97,7 +109,9 @@ func (s *CloseExpiredScheduler) runOnce(ctx context.Context) {
 			continue
 		}
 		if res.RowsAffected > 0 {
+			closed++
 			s.logger.Info("order closed by scheduler", zap.String("order_no", o.OrderNo))
 		}
 	}
+	return closed, nil
 }

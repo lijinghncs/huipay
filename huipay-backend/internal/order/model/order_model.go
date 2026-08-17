@@ -15,8 +15,8 @@ type OrderModel struct {
 	MerchantID      uint64         `gorm:"column:merchant_id;not null" json:"merchant_id"`
 	StoreID         *uint64        `gorm:"column:store_id" json:"store_id"` // 关联门店 ID（可选）
 	CodeID          string         `gorm:"column:code_id;size:16" json:"code_id"` // 来源收款码牌短码
-	// 非持久字段：关联门店名称（列表查询 JOIN 填充）
-	StoreName       string         `gorm:"-" json:"store_name,omitempty"`
+	// 非持久字段：关联门店名称（列表查询 JOIN 填充，只读可扫描）
+	StoreName       string         `gorm:"->" json:"store_name,omitempty"`
 	ParentOrderNo   string         `gorm:"column:parent_order_no;size:32" json:"parent_order_no"`
 	OrderType       string         `gorm:"column:order_type;size:32;not null;default:PAYMENT" json:"order_type"`
 	Amount          int64          `gorm:"column:amount;not null" json:"amount"`
@@ -25,6 +25,7 @@ type OrderModel struct {
 	Channel         vo.ChannelCode `gorm:"column:channel;size:32" json:"channel"`
 	ChannelTradeNo  string         `gorm:"column:channel_trade_no;size:64" json:"channel_trade_no"`
 	SplitStatus     string         `gorm:"column:split_status;size:16;not null;default:PENDING" json:"split_status"`
+	SplitBatchNo    *string        `gorm:"column:split_batch_no;size:64" json:"split_batch_no,omitempty"` // 所属分账批次号
 	Status          string         `gorm:"column:status;size:16;not null;default:CREATED" json:"status"`
 	ExpireAt        *time.Time     `gorm:"column:expire_at" json:"expire_at"`
 	PaidAt          *time.Time     `gorm:"column:paid_at" json:"paid_at"`

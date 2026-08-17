@@ -91,6 +91,7 @@ type MerchantDetail struct {
 	Balance    int64          `json:"balance"`
 	Frozen     int64          `json:"frozen"`
 	PreFrozen  int64          `json:"pre_frozen"`
+	SplitMode  string         `json:"split_mode"` // 分账模式：AUTO/LOCAL_ONLY/CHANNEL_REQUIRED
 	WechatConfig *WechatConfigView `json:"wechat_config"` // 微信支付配置（敏感字段仅回 configured 标记）
 	LoginPhone   string            `json:"login_phone"`  // 登录手机号
 	CreatedAt  time.Time      `json:"created_at"`
@@ -329,8 +330,12 @@ func (s *Service) Get(ctx context.Context, id uint64) (*MerchantDetail, error) {
 		Name:       e.Name,
 		KYCStatus:  e.KYCStatus,
 		Status:     e.Status,
+		SplitMode:  e.SplitMode,
 		CreatedAt:  e.CreatedAt,
 		UpdatedAt:  e.UpdatedAt,
+	}
+	if d.SplitMode == "" {
+		d.SplitMode = "AUTO"
 	}
 	if e.KYCData != "" {
 		var m map[string]any

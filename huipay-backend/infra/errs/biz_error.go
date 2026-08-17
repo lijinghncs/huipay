@@ -11,15 +11,20 @@ import (
 
 // 业务错误码常量。
 const (
-	CodeSuccess             = "0"
-	CodeInvalidParams       = "10001"
-	CodeUnauthorized        = "10002"
-	CodeIdempotentConflict  = "10010"
-	CodeInsufficientBalance = "20001"
-	CodeChannelUnavailable  = "30001"
-	CodeSplitRuleNotMatch   = "40001"
-	CodeReconcileDiff       = "50001"
-	CodeInternalError       = "99999"
+	CodeSuccess               = "0"
+	CodeInvalidParams         = "10001"
+	CodeUnauthorized          = "10002"
+	CodeIdempotentConflict    = "10010"
+	CodeInsufficientBalance   = "20001"
+	CodeChannelUnavailable    = "30001"
+	CodeSplitRuleNotMatch     = "40001"
+	CodeReconcileDiff         = "50001"
+	CodeStatsNotReady         = "50002" // 门店日报未生成/补跑失败
+	CodeReconcileFailedTotal  = "50003" // 商户级总额不平
+	CodeReconcileFailedDetail = "50004" // 门店×日明细不平
+	CodeSplitPeriodOverlapped = "50005" // 时段已有未驳回账单
+	CodeAlreadySplit          = "50006" // 订单所属门店×日已 SUCCESS
+	CodeInternalError         = "99999"
 )
 
 // BizError 业务错误。

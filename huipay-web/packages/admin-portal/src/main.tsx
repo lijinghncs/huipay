@@ -7,6 +7,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter } from 'react-router-dom';
 import { createApi } from '@huipay/shared/api-client';
 import { App } from './App';
+import { getToken } from './services/auth';
 import './styles/global.css';
 
 createApi({
@@ -14,6 +15,8 @@ createApi({
   baseURL: import.meta.env.VITE_API_BASE ?? '',
   // 管理后台无商户身份，返回 0 表示不注入 X-Merchant-Id
   merchantIdProvider: () => 0,
+  // 管理后台登录态：自动注入 Authorization: Bearer <token>
+  tokenProvider: () => getToken(),
 });
 
 const queryClient = new QueryClient({

@@ -12,8 +12,11 @@ import {
   UserOutlined,
   LogoutOutlined,
   DownOutlined,
+  BarChartOutlined,
+  BranchesOutlined,
 } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { clearToken } from '../services/auth';
 
 const { Sider, Content, Header } = Layout;
 
@@ -22,6 +25,9 @@ const menuItems = [
   { key: '/merchants', icon: <ShopOutlined />, label: '商户管理' },
   { key: '/channels', icon: <CreditCardOutlined />, label: '通道配置' },
   { key: '/risk-rules', icon: <SafetyCertificateOutlined />, label: '风控规则' },
+  // V2 合并版：门店按日统计 + 分账管理
+  { key: '/store-stats', icon: <BarChartOutlined />, label: '门店统计' },
+  { key: '/split-manage', icon: <BranchesOutlined />, label: '分账管理' },
 ];
 
 const breadcrumbMap: Record<string, string> = {
@@ -29,6 +35,8 @@ const breadcrumbMap: Record<string, string> = {
   '/merchants': '商户管理',
   '/channels': '通道配置',
   '/risk-rules': '风控规则',
+  '/store-stats': '门店统计',
+  '/split-manage': '分账管理',
 };
 
 // 由路径解析「当前菜单 key」与「页面标题」（子页面归入所属一级菜单）
@@ -69,6 +77,11 @@ export const BasicLayout: React.FC = () => {
   const { token } = theme.useToken();
 
   const { menuKey, title: currentPage } = resolvePage(loc.pathname);
+
+  const logout = () => {
+    clearToken();
+    nav('/login', { replace: true });
+  };
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -116,6 +129,9 @@ export const BasicLayout: React.FC = () => {
               { type: 'divider' },
               { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
             ],
+            onClick: ({ key }) => {
+              if (key === 'logout') logout();
+            },
           }}
         >
           <Space style={{ cursor: 'pointer', color: 'rgba(255,255,255,0.9)' }} size={8}>

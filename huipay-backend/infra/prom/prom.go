@@ -49,6 +49,22 @@ var (
 	SplitAutoDisabledTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "split_auto_disabled_total", Help: "自动分账熔断触发次数",
 	})
+
+	// ===== V2 合并版：分账前置对账 + 每日执行指标 =====
+	SplitPrecheckDiffTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "split_precheck_diff_total", Help: "分账前置对账差异总数（按层级：TOTAL/DETAIL/PASS）",
+	}, []string{"level"})
+	SplitDailyExecTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "split_daily_exec_total", Help: "每日分账执行总数（按状态：SUCCESS/PARTIAL/FAILED）",
+	}, []string{"status"})
+	SplitDailyExecDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "split_daily_exec_duration_ms", Help: "每日分账执行耗时（毫秒）",
+		Buckets: []float64{50, 100, 200, 500, 1000, 2000, 5000, 10000},
+	})
+	SplitStatusRecomputeDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "split_status_recompute_duration_ms", Help: "门店×日 split_status 异步汇总耗时（毫秒）",
+		Buckets: []float64{10, 30, 60, 100, 200, 500, 1000},
+	})
 )
 
 // MustRegister 注册自定义指标（ProMetrics 已通过 promauto 自动注册）。

@@ -156,3 +156,226 @@ export async function listChannels(): Promise<unknown[]> {
 export async function listRiskRules(): Promise<unknown[]> {
   return [];
 }
+
+// ---- V2 合并版：门店按日统计（含分账字段）+ 每日执行 + 审计 + 对账差异 ----
+
+export interface StoreStatItem {
+  id: number;
+  merchant_id: number;
+  store_id: number;
+  biz_date: string;
+  order_count: number;
+  paid_amount: number;
+  channel_breakdown?: string;
+  status_breakdown?: string;
+  split_status?: 'PENDING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
+  split_batch_no?: string;
+  split_at?: string;
+  split_total_amount?: number;
+}
+
+export interface StoreStatListResp {
+  items: StoreStatItem[];
+  total: number;
+}
+
+export interface StoreSumRow {
+  store_id: number;
+  store_name: string;
+  order_count: number;
+  paid_amount: number;
+}
+
+export interface StoreStatSummaryResp {
+  summary: { order_count: number; paid_amount: number };
+  items: StoreSumRow[];
+}
+
+export interface StoreStatParams {
+  merchant_id?: number;
+  store_id?: number;
+  start_date: string;
+  end_date: string;
+  page?: number;
+  page_size?: number;
+}
+
+export async function listAdminStoreStats(params: StoreStatParams): Promise<StoreStatListResp> {
+  return get<StoreStatListResp>('/v1/admin/store-stats', { params });
+}
+
+export async function getAdminStoreStatSummary(params: StoreStatParams): Promise<StoreStatSummaryResp> {
+  return get<StoreStatSummaryResp>('/v1/admin/store-stats/summary', { params });
+}
+
+export async function getAdminStoreDailyStats(storeId: number, startDate: string, endDate: string): Promise<StoreStatItem[]> {
+  return get<StoreStatItem[]>(`/v1/admin/stores/${storeId}/daily-stats`, {
+    params: { start_date: startDate, end_date: endDate },
+  });
+}
+
+export async function recomputeStoreStats(merchantId: number, bizDate: string): Promise<{ updated_stores: number }> {
+  return post<{ updated_stores: number }>('/v1/admin/store-stats/recompute', {}, {
+    params: { merchant_id: merchantId, biz_date: bizDate },
+  });
+}
+
+export async function resetStoreSplitStatus(merchantId: number, storeId: number, bizDate: string): Promise<{ reset: boolean }> {
+  return post<{ reset: boolean }>('/v1/admin/store-stats/reset-split-status', {}, {
+    params: { merchant_id: merchantId, store_id: storeId, biz_date: bizDate },
+  });
+}
+
+// ---- 每日执行 ----
+export interface DailyExecution {
+  id: number;
+  run_id: string;
+  merchant_id: number;
+  biz_date: string;
+  batch_no: string;
+  status: 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'FAILED';
+  started_at: string;
+  finished_at?: string;
+  duration_ms?: number;
+  error_code?: string;
+  error_message?: string;
+  reconcile_diff_id?: number;
+  operator_type: string;
+  operator_id: number;
+}
+
+export interface DailyExecListResp {
+  items: DailyExecution[];
+  total: number;
+}
+
+export async function listDailyExecutions(params: {
+  merchant_id?: number;
+  start_date: string;
+  end_date: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<DailyExecListResp> {
+  return get<DailyExecListResp>('/v1/admin/split/daily-executions', { params });
+}
+
+export async function getDailyExecution(id: number): Promise<DailyExecution> {
+  return get<DailyExecution>(`/v1/admin/split/daily-executions/${id}`);
+}
+
+// ---- 审计 ----
+export interface AuditRecord {
+  id: number;
+  biz_type: string;
+  biz_id: string;
+  action: string;
+  operator_type: string;
+  operator_id: number;
+  detail?: string;
+  created_at: string;
+}
+
+export interface AuditListResp {
+  items: AuditRecord[];
+  total: number;
+}
+
+export async function listAudits(params: {
+  biz_type?: string;
+  biz_id?: string;
+  action?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<AuditListResp> {
+  return get<AuditListResp>('/v1/admin/split/audit', { params });
+}
+
+// ---- 对账差异 ----
+export interface ReconcileDiff {
+  id: number;
+  biz_date: string;
+  merchant_id?: number;
+  diff_type: 'LONG' | 'SHORT' | 'MISMATCH' | 'SPLIT_TOTAL' | 'SPLIT_DETAIL';
+  order_no?: string;
+  transaction_id?: string;
+  local_amount?: number;
+  channel_amount?: number;
+  detail?: string;
+  resolved_at?: string;
+  created_at: string;
+}
+
+export interface ReconcileDiffListResp {
+  items: ReconcileDiff[];
+  total: number;
+}
+
+export async function listReconcileDiffs(params: {
+  merchant_id?: number;
+  diff_type?: string;
+  start_date: string;
+  end_date: string;
+  page?: number;
+  page_size?: number;
+}): Promise<ReconcileDiffListResp> {
+  return get<ReconcileDiffListResp>('/v1/admin/reconcile-diffs', { params });
+}
+
+/** 分账状态徽章辅助（与 merchant-portal 一致）。 */
+export function splitStatusBadge(status?: string): { text: string; color: string; bg: string } {
+  switch (status) {
+    case 'SUCCESS':
+      return { text: '已分账', color: '#047857', bg: 'rgba(16,185,129,0.14)' };
+    case 'PARTIAL':
+      return { text: '部分分账', color: '#b45309', bg: 'rgba(245,158,11,0.14)' };
+    case 'FAILED':
+      return { text: '分账失败', color: '#b91c1c', bg: 'rgba(239,68,68,0.14)' };
+    default:
+      return { text: '未分账', color: '#64748b', bg: 'rgba(100,116,139,0.14)' };
+  }
+}
+
+// ---- 差错监控（管理端跨商户）----
+export interface SplitExceptionItem {
+  order_no: string;
+  merchant_id: number;
+  total_amount: number;
+  receiver_count: number;
+  success_count: number;
+  status: string;
+  attempt_count: number;
+  next_retry_at?: string;
+  degraded: number;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SplitExceptionPage {
+  items: SplitExceptionItem[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export async function listSplitExceptions(params: {
+  status?: string;
+  degraded?: number;
+  page?: number;
+  page_size?: number;
+}): Promise<SplitExceptionPage> {
+  return get<SplitExceptionPage>('/v1/admin/split/exceptions', { params });
+}
+
+export async function resolveSplitExecution(orderNo: string, note?: string): Promise<{ order_no: string; resolved: boolean }> {
+  return post<{ order_no: string; resolved: boolean }>(`/v1/admin/split/executions/${orderNo}/resolve`, { note });
+}
+
+export async function reopenSplitExecution(orderNo: string): Promise<{ order_no: string; reopened: boolean }> {
+  return post<{ order_no: string; reopened: boolean }>(`/v1/admin/split/executions/${orderNo}/reopen`);
+}
+
+export async function resolveReconcileDiff(id: number): Promise<{ id: number; resolved: boolean }> {
+  return post<{ id: number; resolved: boolean }>(`/v1/admin/reconcile-diffs/${id}/resolve`);
+}

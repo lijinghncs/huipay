@@ -16,7 +16,8 @@ import (
 // Claims token 载荷。
 type Claims struct {
 	MerchantID uint64 `json:"merchant_id"`
-	Exp        int64  `json:"exp"` // Unix 秒
+	Role       string `json:"role,omitempty"` // 空=商户；"admin"=管理后台。兼容既有商户 token（无该字段）。
+	Exp        int64  `json:"exp"`            // Unix 秒
 }
 
 // tokenTTL 登录态有效期。
@@ -28,6 +29,21 @@ func Sign(secret string, merchantID uint64) (string, error) {
 		return "", errors.New("auth: merchant id required")
 	}
 	payload, err := json.Marshal(Claims{MerchantID: merchantID, Exp: time.Now().Add(tokenTTL).Unix()})
+	if err != nil {
+		return "", err
+	}
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	body := base64.RawURLEncoding.EncodeToString(payload)
+	sig := hmacSHA256(secret, header+"."+body)
+	return header + "." + body + "." + sig, nil
+}
+
+// SignAdmin 签发管理后台 token（adminID 作为标识，Role=admin）。
+func SignAdmin(secret string, adminID uint64) (string, error) {
+	if adminID == 0 {
+		return "", errors.New("auth: admin id required")
+	}
+	payload, err := json.Marshal(Claims{MerchantID: adminID, Role: "admin", Exp: time.Now().Add(tokenTTL).Unix()})
 	if err != nil {
 		return "", err
 	}

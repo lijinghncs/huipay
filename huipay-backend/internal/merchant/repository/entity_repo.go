@@ -19,6 +19,7 @@ type EntityModel struct {
 	KYCStatus  int        `gorm:"column:kyc_status;not null;default:0"`
 	KYCData    string     `gorm:"column:kyc_data;type:json"`
 	WechatConfig string  `gorm:"column:wechat_config;type:json"` // 商户微信支付配置（敏感字段已 AES 加密）
+	SplitMode  string     `gorm:"column:split_mode;size:16;not null;default:AUTO"` // 分账模式：AUTO/LOCAL_ONLY/CHANNEL_REQUIRED
 	LoginPhone string     `gorm:"column:login_phone;size:32;uniqueIndex:uk_login_phone"`      // 登录手机号
 	LoginPasswordHash string `gorm:"column:login_password_hash;size:128"`                     // 登录密码哈希（bcrypt）
 	Status     int        `gorm:"column:status;not null;default:1"`

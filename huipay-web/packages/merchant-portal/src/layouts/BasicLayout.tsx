@@ -15,8 +15,9 @@ import {
 } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-  BarChartOutlined,
+  AlertOutlined,
   BranchesOutlined,
+  ClockCircleOutlined,
   DashboardOutlined,
   FileTextOutlined,
   LogoutOutlined,
@@ -45,7 +46,7 @@ const menuItems = [
     children: [
       { key: '/', icon: <DashboardOutlined />, label: '概览' },
       { key: '/transactions', icon: <TransactionOutlined />, label: '交易明细' },
-      { key: '/transaction-stats', icon: <BarChartOutlined />, label: '交易统计' },
+      { key: '/store-stats', icon: <ShopOutlined />, label: '门店交易统计' },
     ],
   },
   {
@@ -55,23 +56,37 @@ const menuItems = [
       { key: '/codes', icon: <QrcodeOutlined />, label: '收款码' },
       { key: '/stores', icon: <ShopOutlined />, label: '门店' },
       { key: '/wallets', icon: <WalletOutlined />, label: '钱包' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '分账管理',
+    children: [
       { key: '/split-rules', icon: <BranchesOutlined />, label: '分账规则' },
       { key: '/split-bills', icon: <FileTextOutlined />, label: '分账单' },
       { key: '/splits', icon: <NodeIndexOutlined />, label: '分账明细' },
+      { key: '/split-exceptions', icon: <AlertOutlined />, label: '差错中心' },
     ],
+  },
+  {
+    type: 'group' as const,
+    label: '系统',
+    children: [{ key: '/scheduler', icon: <ClockCircleOutlined />, label: '定时任务' }],
   },
 ];
 
 const titleMap: Record<string, string> = {
   '/': '概览',
   '/transactions': '交易明细',
-  '/transaction-stats': '交易统计',
+  '/store-stats': '门店交易统计',
+  '/scheduler': '定时任务',
   '/codes': '收款码',
   '/stores': '门店',
   '/wallets': '钱包',
   '/split-rules': '分账规则',
   '/split-bills': '分账单',
   '/splits': '分账明细',
+  '/split-exceptions': '差错中心',
 };
 
 interface MenuPanelProps {

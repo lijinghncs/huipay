@@ -31,9 +31,13 @@ type StoreRevenueRepo struct{ db *gorm.DB }
 func NewStoreRevenueRepo(db *gorm.DB) *StoreRevenueRepo { return &StoreRevenueRepo{db: db} }
 
 // splitExclusion 返回排除已分账订单的 SQL 片段与参数。
-// 已分账订单判定：
+//
+// 已分账订单判定（V2 统一口径）：
 //  1. 单笔分账：t_split_execution 中 order_no 相同且状态为 SUCCESS；
-//  2. 时间段分账：被某张未驳回账单(order_nos 覆盖)记录，即 PENDING/APPROVED/EXECUTED 状态账单收录的订单。
+//  2. 时间段分账：被某张已 EXECUTED 的账单（通过 t_split_bill_biz_date 关联表覆盖）记录。
+//
+// 注意：原版本包含 PENDING/APPROVED 是错误的——这两态只是审批流，订单并未真正分账。
+// 现统一只排除 EXECUTED 状态，并通过 t_split_bill_biz_date 关联表判断 biz_date 覆盖范围。
 //
 // 返回表达式直接引用主表别名 o。
 func splitExclusion() string {
@@ -43,10 +47,9 @@ func splitExclusion() string {
 	)
 	AND NOT EXISTS (
 		SELECT 1 FROM t_split_bill sb
+		INNER JOIN t_split_bill_biz_date bd ON bd.bill_id = sb.id AND bd.biz_date = DATE(o.paid_at)
 		WHERE sb.merchant_id = o.merchant_id
-		  AND sb.status IN ('PENDING','APPROVED','EXECUTED')
-		  AND sb.order_nos IS NOT NULL
-		  AND JSON_CONTAINS(sb.order_nos, JSON_QUOTE(o.order_no))
+		  AND sb.status = 'EXECUTED'
 	)`
 }
 

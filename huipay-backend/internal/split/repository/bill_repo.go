@@ -36,6 +36,7 @@ type SplitBillModel struct {
 	TotalAmount int64          `gorm:"column:total_amount;not null"`
 	Detail      string         `gorm:"column:detail;type:json;not null"`
 	OrderNos    string         `gorm:"column:order_nos;type:json"` // 账单覆盖的订单号列表(JSON 数组)，用于排除已分账订单
+	BizDates    string         `gorm:"column:biz_dates;type:json"` // 账单覆盖业务日期列表(冗余，便于展示；过滤走 t_split_bill_biz_date)
 	Status      string         `gorm:"column:status;size:16;not null;default:PENDING"`
 	ApprovedAt  *time.Time     `gorm:"column:approved_at"`
 	ExecutedAt  *time.Time     `gorm:"column:executed_at"`
@@ -102,6 +103,22 @@ func (r *SplitBillRepo) UpdateStatus(ctx context.Context, id uint64, status stri
 		return false, res.Error
 	}
 	return res.RowsAffected > 0, nil
+}
+
+// MarkOrdersSplit 账单执行成功后，回写该批次覆盖订单的 t_order.split_status=SUCCESS。
+// 批次模式以批次号作为执行单元，单个订单不经过订单级分账，故需在此统一回写，
+// 保证交易明细的「分账状态」口径与批次执行结果一致。
+func (r *SplitBillRepo) MarkOrdersSplit(ctx context.Context, merchantID uint64, batchNo string) error {
+	return r.db.WithContext(ctx).Table("t_order").
+		Where("merchant_id = ? AND split_batch_no = ? AND deleted_at IS NULL", merchantID, batchNo).
+		Update("split_status", "SUCCESS").Error
+}
+
+// ResetOrdersSplit 账单驳回时，将该批次覆盖订单的 t_order.split_status 复位为 PENDING。
+func (r *SplitBillRepo) ResetOrdersSplit(ctx context.Context, merchantID uint64, batchNo string) error {
+	return r.db.WithContext(ctx).Table("t_order").
+		Where("merchant_id = ? AND split_batch_no = ? AND deleted_at IS NULL", merchantID, batchNo).
+		Update("split_status", "PENDING").Error
 }
 
 // GetStoreNames 批量查询门店名称（t_store.id -> name）。
