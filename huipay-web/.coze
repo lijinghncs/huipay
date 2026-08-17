@@ -8,5 +8,9 @@ version = ""
 [preview]
 preview_enable = "enabled"
 
+[dev]
+build = ["bash", "scripts/build.sh"]
+run = ["bash", "scripts/run.sh"]
+
 [subprojects]
 path = ["."]

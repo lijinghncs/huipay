@@ -48,7 +48,10 @@
 
 ## 运行与预览
 
-- **预览**：`huipay-web` 子项目可预览（Vite dev server），但当前尚未配置 `[dev]` 入口和 `.preview` 文件
+- **预览**：`huipay-web` 子项目可预览（Vite dev server）
+  - `.preview` 端口：5000，`.coze [dev]` 脚本：`scripts/build.sh`（安装依赖）+ `scripts/run.sh`（启动 merchant-portal Vite dev server）
+  - 预览入口：`http://localhost:5000`（merchant-portal 商家工作台）
+- **部署**：根 `.coze` 通过 `scripts/build.sh` + `scripts/run.sh` 编排
 - **部署**：根 `.coze` 通过 `scripts/build.sh` + `scripts/run.sh` 编排
   - `build.sh`：先构建前端（pnpm build:all），再构建后端（go build）
   - `run.sh`：启动后端二进制，端口 5000，默认 `HUIPAY_SKIP_DB=true`（无需数据库即可启动）
