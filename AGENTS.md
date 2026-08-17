@@ -18,15 +18,23 @@
 ```
 /workspace/projects/
 ├── .coze                    # 根部署配置（monorepo）
+├── .gitignore
+├── AGENTS.md
 ├── scripts/
 │   ├── build.sh             # 部署构建脚本（构建前端 + 后端）
-│   └── run.sh               # 部署运行脚本（启动后端，端口 5000）
+│   ├── run.sh               # 部署运行脚本（启动静态文件服务器 + 后端）
+│   └── serve-static.mjs     # 部署静态文件服务器（3 portal + API 代理）
 ├── huipay-web/              # 前端 monorepo（pnpm workspace）
 │   ├── .coze                # sub_id=d310f0de, project_type=web
+│   ├── .preview             # 预览端口声明（expose_port=5000）
+│   ├── scripts/
+│   │   ├── build.sh         # 预览构建脚本（pnpm install）
+│   │   ├── run.sh           # 预览运行脚本（启动 3 个 Vite dev server + 路由）
+│   │   └── preview-router.mjs # 预览路由服务器（路径分发到各 Vite dev server）
 │   ├── packages/
-│   │   ├── merchant-portal/ # 商家工作台（Vite dev: 5170）
-│   │   ├── admin-portal/    # 管理后台（Vite dev: 5171）
-│   │   ├── checkout-sdk/    # 收银台 SDK（Vite dev: 5173）
+│   │   ├── merchant-portal/ # 商家工作台（Vite dev: 5170, base: /merchant/）
+│   │   ├── admin-portal/    # 管理后台（Vite dev: 5171, base: /admin/）
+│   │   ├── checkout-sdk/    # 收银台 SDK（Vite dev: 5173, base: /checkout/）
 │   │   ├── shared/          # 共享类型/API Client/工具
 │   │   └── ui-kit/          # 共享 UI 组件
 │   └── pnpm-workspace.yaml
@@ -48,16 +56,33 @@
 
 ## 运行与预览
 
-- **预览**：`huipay-web` 子项目可预览（Vite dev server）
-  - `.preview` 端口：5000，`.coze [dev]` 脚本：`scripts/build.sh`（安装依赖）+ `scripts/run.sh`（启动 merchant-portal Vite dev server）
-  - 预览入口：`http://localhost:5000`（merchant-portal 商家工作台）
-- **部署**：根 `.coze` 通过 `scripts/build.sh` + `scripts/run.sh` 编排
-- **部署**：根 `.coze` 通过 `scripts/build.sh` + `scripts/run.sh` 编排
-  - `build.sh`：先构建前端（pnpm build:all），再构建后端（go build）
-  - `run.sh`：启动后端二进制，端口 5000，默认 `HUIPAY_SKIP_DB=true`（无需数据库即可启动）
-- **本地开发**：
-  - 前端：`cd huipay-web && pnpm dev:merchant`（端口 5170）
-  - 后端：`cd huipay-backend && make run`（端口 8080，需 MySQL）
+### 预览（huipay-web 子项目，3 portal 统一入口）
+
+- **预览入口**：`http://localhost:5000`（路由服务器，自动分发到各 Vite dev server）
+- **访问路径**：
+  - `/merchant/` → 商家工作台（merchant-portal，Vite dev :5170）
+  - `/admin/` → 管理后台（admin-portal，Vite dev :5171）
+  - `/checkout/` → 收银台 SDK（checkout-sdk，Vite dev :5173）
+  - `/checkout/h5` → 收银台 H5 页
+- **启动命令**：`cd huipay-web && bash scripts/run.sh`（自动启动 3 个 Vite dev server + 路由服务器）
+- **预览脚本**：`.coze [dev]` → `scripts/build.sh`（安装依赖）+ `scripts/run.sh`（启动全门户预览）
+
+### 部署（根 .coze 编排，方案 C）
+
+- **构建**：`scripts/build.sh` → 先构建 3 个前端 portal（pnpm build:all，指定各自 base 路径），再构建后端 Go 二进制
+- **运行**：`scripts/run.sh` → `scripts/serve-static.mjs`（Node.js 静态文件服务器，端口 5000）+ 后端（后台端口 8080）
+- **部署访问路径**（同预览路径）：
+  - `/merchant/` → merchant-portal 构建产物
+  - `/admin/` → admin-portal 构建产物
+  - `/checkout/` → checkout-sdk 构建产物
+  - `/v1/*` → 代理到后端 API
+  - `/` → 重定向到 `/merchant/`
+- **后端端口**：默认 8080（`HUIPAY_HTTP_PORT` 覆盖）
+
+### 本地开发
+
+- 前端：`cd huipay-web && pnpm dev:merchant`（端口 5170）
+- 后端：`cd huipay-backend && make run`（端口 8080，需 MySQL）
 
 ## 用户偏好与长期约束
 
