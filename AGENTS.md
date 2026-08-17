@@ -43,6 +43,20 @@
 │   ├── cmd/server/main.go   # 启动入口
 │   ├── infra/               # 基础设施层（config/db/migrator/obs/prom）
 │   ├── internal/            # 业务逻辑（order/payment/account/merchant/split/store/stats/admin）
+│   │   └── split/           # 分账模块（P0 重构后：高内聚低耦合）
+│   │       ├── alloc/       # 分配方案纯函数计算（无外部依赖，可单测）
+│   │       ├── service/     # 编排层，按 UseCase 拆为 5 文件：
+│   │       │   ├── service.go     # Service 结构体 + NewService + 共享基础设施
+│   │       │   ├── ordersplit.go  # 单笔订单分账（Execute / Get / Preview / Retry / ListExecutions）
+│   │       │   ├── periodbill.go  # 时段分账 + 审批流（ExecuteByPeriod / GenerateBill / ApproveBill / RejectBill）
+│   │       │   ├── reconcile.go   # 差错中心 + 对账差异（ListExceptions / ListReconcileDiffs / ResolveReconcileDiff / ListAudits）
+│   │       │   └── rules.go       # 规则 CRUD（ListRules / CreateRule / UpdateRule / SetRuleStatus / DeleteRule）
+│   │       ├── handler/     # HTTP 层（薄适配器，无业务逻辑）
+│   │       ├── executor/    # 分账执行器（状态机 + 通道 + 账本）
+│   │       ├── rule/        # 规则引擎（DSL 解析 + 匹配）
+│   │       ├── recon/       # 前置对账（双层 Prechecker）
+│   │       ├── scheduler/   # 补偿调度 + 重算 + 日对账
+│   │       └── repository/  # 数据访问（11 个表）
 │   └── Makefile             # 本地开发命令
 └── docs/                    # 产品方案/技术方案/设计文档
 ```
@@ -53,6 +67,10 @@
 - **API 路由**：`/v1/` 前缀，含收银台、商户、分账、管理后台、门店等模块
 - **前端入口**：各 package 独立 Vite 应用，`pnpm dev:merchant` / `pnpm dev:admin` / `pnpm dev:sdk`
 - **部署端口**：后端服务端口 5000（通过 `HUIPAY_HTTP_PORT` 环境变量覆盖，默认 8080）
+- **分账模块（P0 重构）**：
+  - `internal/split/alloc/` — 分配方案纯函数计算，无 DB/通道依赖，可独立单测
+  - `internal/split/service/` — 按 UseCase 拆为 5 文件，各 <= 600 行，handler 零改动
+  - 入口：`handler.New(svc, logger)` → `service.NewService(...)`
 
 ## 运行与预览
 

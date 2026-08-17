@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/huipay/huipay-backend/infra/errs"
+	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/alloc"
+	"github.com/huipay/huipay-backend/internal/split/executor"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
 )
@@ -269,7 +271,7 @@ func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo str
 	return nil
 }
 
-// ExecuteByPeriod 按周期执行分账：规则匹配 → 前置对账 → 分配 → 执行 → 状态机 → 审计。
+// ExecuteByPeriod 按周期执行分账：规则匹配 → 前置对账 → 分配 → 执行 → 审计。
 func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *ExecuteByPeriodRequest) (*ExecuteByPeriodResponse, error) {
 	if s.ruleEngine == nil || s.executor == nil {
 		return nil, errs.New(errs.CodeInternalError, "split engine not ready", 500)
@@ -285,7 +287,6 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		return nil, errs.New(errs.CodeInvalidParams, "invalid end_date, expected YYYY-MM-DD", 200)
 	}
 	bizDates := alloc.CollectBizDates(start, end)
-	paidAt := start.Format(time.RFC3339) + "/" + end.Format(time.RFC3339)
 
 	// 查询业务日支付总额
 	totalPaid, err := s.revenueQuerier.SumPaid(ctx, merchantID, start, end)
@@ -335,46 +336,51 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	// 6. 执行分账
 	batchNo := fmt.Sprintf("SP-%d-%d-%d", merchantID, start.Unix(), end.Unix())
 	runID := fmt.Sprintf("SP_RUN-%d-%s-%d", merchantID, batchNo, time.Now().UnixNano())
-	execReq := &ExecuteRequest{
-		OrderNo:       runID,
-		MerchantID:    merchantID,
-		RuleCode:      matched.RuleCode,
-		Amount:        totalPaid,
-		Allocations:   allocations,
-		PaidAt:        paidAt,
-		BizDate:       start,
-		ReceiverCount: len(allocations),
+
+	// 获取商户钱包（源账户）
+	merchantWallet, wErr := s.account.GetWalletByEntityType(ctx, merchantID, vo.EntityMerchant)
+	if wErr != nil || merchantWallet == nil {
+		return nil, errs.New(errs.CodeInternalError, "merchant wallet not found", 200)
 	}
 
-	execResult, execErr := s.executor.Execute(ctx, execReq)
+	execReq := &executor.ExecuteRequest{
+		OrderNo:        runID,
+		MerchantID:     merchantID,
+		SourceWallet:   merchantWallet.ID,
+		Allocations:    allocations,
+		Channel:        vo.ChannelCode(req.Channel),
+		IdempotencyKey: "period-split-" + batchNo,
+	}
+
+	execErr := s.executor.Execute(ctx, execReq)
 	if execErr != nil {
+		// 审计记录失败
+		s.appendAudit(ctx, "DAILY_SPLIT", runID, "EXECUTE_FAILED", merchantID, map[string]any{
+			"rule_code": matched.RuleCode,
+			"amount":    totalPaid,
+			"error":     execErr.Error(),
+		})
 		return nil, errs.Wrap(errs.CodeInternalError, "execute split failed", 200, execErr)
 	}
 
-	// 7. 审计
-	auditAction := "EXECUTE"
-	if execResult.Status == "FAILED" {
-		auditAction = "EXECUTE_FAILED"
-	}
-	s.appendAudit(ctx, "DAILY_SPLIT", execReq.OrderNo, auditAction, merchantID, map[string]any{
+	// 7. 审计成功
+	s.appendAudit(ctx, "DAILY_SPLIT", runID, "EXECUTE", merchantID, map[string]any{
 		"rule_code": matched.RuleCode,
 		"amount":    totalPaid,
-		"status":    execResult.Status,
 	})
 
 	// 8. 执行后对账（占位，P1 阶段按 ports 注入后实现）
 	_ = merchantID
 	_ = start
 	_ = bizDates
-	_ = execResult
 	_ = totalPaid
 
 	return &ExecuteByPeriodResponse{
 		BatchNo:   batchNo,
 		Executed:  true,
 		Message:   "ok",
-		OrderNo:   execReq.OrderNo,
-		Status:    execResult.Status,
+		OrderNo:   runID,
+		Status:    "SUCCESS",
 		Amount:    totalPaid,
 	}, nil
 }
