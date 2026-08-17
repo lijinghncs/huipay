@@ -7,6 +7,7 @@
 package scheduler
 
 import (
+	"github.com/huipay/huipay-backend/internal/split/splitcfg"
 	"context"
 	"sync"
 	"time"
@@ -18,11 +19,11 @@ import (
 	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
 )
 
-// recomputeInterval 默认 10 分钟；与现有 09:00 对账错峰。
-const recomputeInterval = 10 * time.Minute
+// splitcfg.RecomputeInterval 默认 10 分钟；与现有 09:00 对账错峰。
+	var _ = splitcfg.RecomputeInterval  // 使用 splitcfg 集中配置
 
-// lookbackWindow 增量窗口（5 分钟）。
-const lookbackWindow = 5 * time.Minute
+// splitcfg.LookbackWindow 增量窗口（5 分钟）。
+	var _ = splitcfg.LookbackWindow  // 使用 splitcfg 集中配置
 
 // RecomputeScheduler split_status 异步汇总调度器。
 type RecomputeScheduler struct {
@@ -48,7 +49,7 @@ func NewRecomputeScheduler(db *gorm.DB, statsSvc *statsservice.Service, logger *
 func (s *RecomputeScheduler) Start(ctx context.Context) {
 	// 启动时立刻跑一次（处理积压）
 	s.runOnce(ctx)
-	ticker := time.NewTicker(recomputeInterval)
+	ticker := time.NewTicker(splitcfg.RecomputeInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -67,7 +68,7 @@ func (s *RecomputeScheduler) runOnce(ctx context.Context) {
 		}
 	}()
 
-	// 1. 扫最近 lookbackWindow 内的变更
+	// 1. 扫最近 splitcfg.LookbackWindow 内的变更
 	type row struct {
 		MerchantID uint64    `gorm:"column:merchant_id"`
 		BizDate    time.Time `gorm:"column:biz_date"`
@@ -77,7 +78,7 @@ func (s *RecomputeScheduler) runOnce(ctx context.Context) {
         FROM t_split_execution se USE INDEX (idx_status_executed)
         INNER JOIN t_order o ON o.order_no = se.order_no
         WHERE se.executed_at >= ?`
-	since := time.Now().Add(-lookbackWindow)
+	since := time.Now().Add(-splitcfg.LookbackWindow)
 	var rows []row
 	if err := s.db.WithContext(ctx).Raw(q, since).Scan(&rows).Error; err != nil {
 		s.logger.Warn("recompute scan changed exec fail", zap.Error(err))

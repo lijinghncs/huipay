@@ -16,13 +16,14 @@ import (
 	"github.com/huipay/huipay-backend/internal/scheduler/framework"
 	"github.com/huipay/huipay-backend/internal/split/executor"
 	"github.com/huipay/huipay-backend/internal/split/repository"
+	"github.com/huipay/huipay-backend/internal/split/splitcfg"
 )
 
-// hangThreshold 悬挂判定阈值：PROCESSING 超过该时长未更新视为悬挂。
-const hangThreshold = 10 * time.Minute
+// splitcfg.HangThreshold 悬挂判定阈值：PROCESSING 超过该时长未更新视为悬挂。
+	var _ = splitcfg.HangThreshold  // 使用 splitcfg 集中配置
 
-// batchSize 单轮补偿处理上限。
-const batchSize = 50
+// splitcfg.BatchSize 单轮补偿处理上限。
+	var _ = splitcfg.BatchSize  // 使用 splitcfg 集中配置
 
 // CompensateScheduler 分账补偿调度器（B1 重入 + B2 悬挂检测）。
 type CompensateScheduler struct {
@@ -79,13 +80,13 @@ func (s *CompensateScheduler) runOnce(ctx context.Context) (int64, error) {
 	successCount := int64(0)
 
 	// B2 悬挂检测：处理中超时 → SUSPENDED（并入重入范围）
-	if n, err := s.orderStatusRepo.MarkSuspended(ctx, now.Add(-hangThreshold)); err != nil {
+	if n, err := s.orderStatusRepo.MarkSuspended(ctx, now.Add(-splitcfg.HangThreshold)); err != nil {
 		s.logger.Warn("split mark suspended fail", zap.Error(err))
 	} else if n > 0 {
 		s.logger.Info("split hanging detected", zap.Int64("count", n))
 		if s.alerter != nil {
 			s.alerter.Alert(ctx, "【分账悬挂】处理中超时订单",
-				fmt.Sprintf("检测到 %d 笔分账订单处理中超时（>%s），已置悬挂并纳入自动补偿", n, hangThreshold))
+				fmt.Sprintf("检测到 %d 笔分账订单处理中超时（>%s），已置悬挂并纳入自动补偿", n, splitcfg.HangThreshold))
 		}
 	}
 	if c, err := s.orderStatusRepo.SuspendedCount(ctx); err == nil {
@@ -93,7 +94,7 @@ func (s *CompensateScheduler) runOnce(ctx context.Context) (int64, error) {
 	}
 
 	// B1 补偿重入
-	candidates, err := s.orderStatusRepo.ListRetryCandidates(ctx, now, batchSize)
+	candidates, err := s.orderStatusRepo.ListRetryCandidates(ctx, now, splitcfg.BatchSize)
 	if err != nil {
 		s.logger.Warn("split list retry candidates fail", zap.Error(err))
 		return 0, err
