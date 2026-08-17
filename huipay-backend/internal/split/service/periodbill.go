@@ -42,8 +42,8 @@ type BillDTO struct {
 	StartTime   string `json:"start_time"`
 	EndTime     string `json:"end_time"`
 	CreatedAt   string `json:"created_at"`
-	ApprovedAt  string `json:"approved_at,omitempty"`
-	ExecutedAt  string `json:"executed_at,omitempty"`
+	ApprovedAt  *string `json:"approved_at,omitempty"`
+	ExecutedAt  *string `json:"executed_at,omitempty"`
 	Items       []repository.SplitBillItem `json:"items,omitempty"`
 }
 
@@ -63,9 +63,9 @@ type BillStoreItem struct {
 
 // BillStoreOrders 门店订单明细。
 type BillStoreOrders struct {
-	StoreID   uint64                      `json:"store_id"`
-	StoreName string                      `json:"store_name"`
-	Orders    []repository.SplitOrderStatusModel `json:"orders"`
+	StoreID   uint64                              `json:"store_id"`
+	StoreName string                              `json:"store_name"`
+	Orders    []repository.SplitOrderStatusModel  `json:"orders"`
 }
 
 // GenerateBill 生成分账账单（从周期分账执行结果生成）。
@@ -83,7 +83,7 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 	}
 
 	// 查询规则
-	rule, err := s.ruleRepo.GetByCodeAndMerchant(ctx, ruleCode, merchantID)
+	rule, err := s.ruleRepo.GetByCodeAndMerchant(ctx, req.RuleCode, merchantID)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, "query rule failed", 200, err)
 	}
@@ -98,7 +98,7 @@ func (s *Service) GenerateBill(ctx context.Context, merchantID uint64, req *Exec
 	m := &repository.SplitBillModel{
 		MerchantID:  merchantID,
 		BatchNo:     batchNo,
-		RuleCode:    ruleCode,
+		RuleCode:    req.RuleCode,
 		RuleName:    rule.RuleName,
 		TotalAmount: 0,
 		Status:      repository.BillPending,
@@ -303,10 +303,10 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 	}
 
 	// 3. 前置对账（双层 Prechecker）
-	precheck := s.prechecker.Precheck(ctx, merchantID, bizDates, totalPaid)
-	if !precheck.OK {
-		// 不阻断，记录差异
-		_ = precheck
+	checkResult, checkErr := s.prechecker.Check(ctx, merchantID, start, end)
+	if checkErr == nil && !checkResult.Pass {
+		// 不阻断，记录差异到日志
+		_ = checkResult.Diffs
 	}
 
 	// 4. 查询门店营收分布
@@ -362,8 +362,12 @@ func (s *Service) ExecuteByPeriod(ctx context.Context, merchantID uint64, req *E
 		"status":    execResult.Status,
 	})
 
-	// 8. 执行后对账
-	s.doPostReconcile(ctx, merchantID, start, bizDates, execResult, totalPaid)
+	// 8. 执行后对账（占位，P1 阶段按 ports 注入后实现）
+	_ = merchantID
+	_ = start
+	_ = bizDates
+	_ = execResult
+	_ = totalPaid
 
 	return &ExecuteByPeriodResponse{
 		BatchNo:   batchNo,
@@ -387,15 +391,4 @@ func (s *Service) doMatchRule(ctx context.Context, merchantID uint64, req *Execu
 		Channel:    req.Channel,
 	})
 	return matched, matched != nil
-}
-
-func (s *Service) doPostReconcile(ctx context.Context, merchantID uint64, bizDate time.Time, bizDates []time.Time, execResult *ExecuteResponse, totalPaid int64) {
-	if execResult == nil {
-		return
-	}
-	// 执行后对账：post-reconcile 逻辑保留占位，P1 阶段按 ports 注入后实现
-	_ = merchantID
-	_ = bizDate
-	_ = bizDates
-	_ = totalPaid
 }

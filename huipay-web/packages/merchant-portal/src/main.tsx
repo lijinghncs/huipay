@@ -74,7 +74,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     >
       <AntApp>
         <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
+          <BrowserRouter basename="/merchant">
             <App />
           </BrowserRouter>
         </QueryClientProvider>
