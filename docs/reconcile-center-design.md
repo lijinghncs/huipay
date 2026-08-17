@@ -1,9 +1,10 @@
 # 三步对账过程与结果 · 管理端「对账中心」详细设计文档
 
-> 版本：v1.1
+> 版本：v1.2
 > 日期：2026-08-17
-> 状态：已对齐 recon V2 架构（docs/reconcile-architecture-v2.md），待评审
+> 状态：统一差异表方案已合入，待评审
 >
+> v1.2 变更：①前置对账结果 / 执行后差异 / 渠道差异三 Tab 合并为**统一对账结果表**（§6.2 Tab 3），按评审意见要求支持后续新增对账类型无缝接入；②新增「统一结果台账」后端设计（§5.3：前置对账通过结果落库 `SPLIT_PRECHECK_PASS` + 类型注册表 + 统一查询接口）；③联动跳转与数据字典同步更新。
 > v1.1 变更：①§5.1 前置对账异常 runlog 已随 V2 重构落地，标记完成；②修正「管理端不核销」决策与代码现实的矛盾（§2）；③新增「全过程联动」设计（§6.5：运行→差异跳转、业务日时间线）；④文件路径对齐 internal/recon/*。
 
 ## 1. 背景与目标
@@ -19,6 +20,8 @@
 | 查看入口 | **平台管理端** | 对账是平台级资金安全机制，跨商户、跨渠道；运行日志/比对口径属平台内部机制，不应暴露给商户；商户端差错中心已覆盖自查+核销诉求 |
 | 前置对账留痕 | **补充独立运行日志（仅异常时记录）** | 前置对账同步触发可能高频，仅记录异常/不平场景避免日志膨胀；同时使"过程"可回溯 |
 | 管理端核销 | **提供核销（v1.1 修订）** | v1.0 曾决策「仅查看」，但代码现实是管理端核销接口（`POST /v1/admin/reconcile-diffs/:id/resolve`）与 SplitManage 前端核销按钮均已存在；运营场景（商户未及时处理平台侧差异）也需要管理端兜底。故修订为保留，核销留痕走审计 |
+| 结果呈现形式 | **统一对账结果表（v1.2）** | 前置对账结果（PASSED/FAILED）、执行后差异、渠道差异合并为一张统一结果表呈现，不按对账层分 Tab；对账层/结果类型作为筛选项。后续新增对账（如支付宝渠道、账本平衡校验）只需注册新类型即自动纳入，前端零改动 |
+| 统一台账落点 | **写入侧统一：`t_reconcile_diff` 升级为对账结果台账（v1.2）** | 读取侧 UNION（t_reconcile_diff + t_split_audit）方案被否决：`t_split_audit` 无 merchant_id/biz_date 列（商户过滤需 JSON 扫描）、跨表分页复杂、新对账类型仍要回答"写哪张表"。改为前置对账通过结果也写入 `t_reconcile_diff`（新类型 `SPLIT_PRECHECK_PASS`），单表查询/过滤/分页/扩展全部自然成立。审计 `RECONCILE_*` 留痕保留不变 |
 | 交付形式 | 落成 md 文档 | 本文档 |
 
 ## 3. 三层对账数据现状
@@ -76,7 +79,35 @@
 | 对账差异列表 | `GET /v1/admin/reconcile-diffs?diff_type=&merchant_id=&start_date=&end_date=` | 三层差异结果 | 已有 |
 | 审计日志列表 | `GET /v1/admin/split/audit?biz_type=&action=` | 前置对账过程 | 已有 |
 
-> 结论：后端**无需新增查询接口**，仅需为前置对账补充异常 runlog 写入（5.1）。
+> 结论：过程类查询接口已齐备；v1.2 统一结果表需新增「统一对账结果查询 + 类型注册表」两个接口与前置对账通过结果落库（见 5.3）。
+
+### 5.3 统一结果台账（v1.2 新增后端改动）
+
+**① 前置对账通过结果落库**
+- 前置对账 Check 通过时，向 `t_reconcile_diff` 写入一行 `diff_type = SPLIT_PRECHECK_PASS`（detail 含总额比对 JSON，与失败行同构）；失败仍写 `SPLIT_TOTAL` / `SPLIT_DETAIL`，行为不变。
+- 幂等沿用 `WritePrecheck` 语义：同商户同期间同类型未核销行清理重写，保留核销历史。
+- 失败转通过后，旧失败行**不自动核销**（差异需显式处置；复检通过后由运营核销并注明）。
+- 执行后/渠道对账平账运行**不写** PASS 行（其"运行成功且零差异"由 runlog `rows_affected=0` 表达，避免每日全商户写放大）。
+
+**② 类型注册表（统一呈现的扩展机制）**
+- `recon/domain` 新增结果类型注册表：每个类型登记 `layer`（PRECHECK/POST_SPLIT/CHANNEL/…）、`category`（PASS/ANOMALY）、`task_name`、`resolvable`。
+- 现有类型映射：
+
+| diff_type | layer | category | task_name | 可核销 |
+|---|---|---|---|---|
+| SPLIT_PRECHECK_PASS | PRECHECK | PASS | split_precheck | 否 |
+| SPLIT_TOTAL / SPLIT_DETAIL | PRECHECK | ANOMALY | split_precheck | 是 |
+| SPLIT_POST / SPLIT_DEGRADED | POST_SPLIT | ANOMALY | split_daily_reconcile | 是 |
+| LONG / SHORT / MISMATCH | CHANNEL | ANOMALY | reconcile_daily | 是 |
+
+- **扩展方式**：新增对账 = 新 Job 按既有幂等语义写 `t_reconcile_diff` + 注册表登记新类型。统一结果表、筛选项、状态徽章全部由注册表驱动，前端零改动。
+
+**③ 新增接口**
+- `GET /v1/admin/reconcile/results?layer=&diff_type=&merchant_id=&start_date=&end_date=&status=&page=&page_size=` — 单表查询 `t_reconcile_diff`（含 PASS 行），响应附注册表元信息（layer/category 标签）。
+- `GET /v1/admin/reconcile/result-types` — 返回类型注册表（前端筛选项与徽章渲染数据源）。
+
+**④ 商户端隔离**
+- 商户端差错中心默认视图（diff_type 为空）排除 PASS 类行（仅查 ANOMALY 类型），语义不变；显式按类型查询不受影响。
 
 ## 6. 前端「对账中心」页面设计
 
@@ -162,7 +193,7 @@
 
 | 字段 | 说明 |
 |---|---|
-| diff_type | SPLIT_TOTAL / SPLIT_DETAIL / LONG / SHORT / MISMATCH / SPLIT_POST / SPLIT_DEGRADED |
+| diff_type | SPLIT_PRECHECK_PASS / SPLIT_TOTAL / SPLIT_DETAIL / LONG / SHORT / MISMATCH / SPLIT_POST / SPLIT_DEGRADED（v1.2：结果类型注册表见 5.3，新增对账类型在此登记） |
 | biz_date | 业务日 |
 | merchant_id | 商户 |
 | order_no / transaction_id | 订单号 / 交易号 |
@@ -176,13 +207,14 @@
 |---|---|---|---|---|
 | 1 | 前置对账补充异常运行日志 | 后端 | 5.1 | ✅ 已随 recon V2 重构落地 |
 | 1.5 | 运行记录接口增加 biz_date 过滤 | 后端 | 6.5 线索二 | 待实施 |
+| 1.6 | 前置对账通过结果落库 SPLIT_PRECHECK_PASS | 后端 | 5.3 | 待实施 |
+| 1.7 | 类型注册表（domain）+ result-types 接口 | 后端 | 5.3 | 待实施 |
+| 1.8 | 统一对账结果查询接口（含商户端 PASS 类型隔离） | 后端 | 5.3 | 待实施 |
 | 2 | 新增对账中心路由与菜单 | 管理端 | 6.1 | 待实施 |
 | 3 | 运行概览 Tab（含业务日全景，6.5 线索二） | 管理端 | 6.2 / 6.5 | 待实施 |
 | 4 | 对账任务运行 Tab（含关联差异跳转，6.5 线索一） | 管理端 | 6.2 / 6.5 | 待实施 |
-| 5 | 前置对账 Tab | 管理端 | 6.2 | 待实施 |
-| 6 | 渠道对账 Tab | 管理端 | 6.2 | 待实施 |
-| 7 | 分账执行后 Tab | 管理端 | 6.2 | 待实施 |
-| 8 | 扩展状态徽章 + 核销操作（审计留痕） | 管理端 | 6.3 / §2 | 待实施 |
+| 5 | 统一对账结果 Tab（v1.2：合并前置/执行后/渠道，注册表驱动筛选与徽章） | 管理端 | 5.3 / §2 | 待实施 |
+| 8 | 核销操作（仅 ANOMALY 类型，审计留痕） | 管理端 | 6.3 / §2 | 待实施 |
 | 9 | 联调与验证 | 全部 | | 待实施 |
 
 ## 9. 评审备注
