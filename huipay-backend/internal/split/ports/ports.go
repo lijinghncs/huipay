@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/huipay/huipay-backend/internal/domain/vo"
+	"github.com/huipay/huipay-backend/internal/recon/domain"
 	"github.com/huipay/huipay-backend/internal/split/executor"
-	"github.com/huipay/huipay-backend/internal/split/recon"
 )
 
 // WalletResolver 商户钱包查询（跨域接口，替代 account.Service）。
@@ -28,7 +28,7 @@ type Executor interface {
 	ListByOrderNoWithReceiver(ctx context.Context, merchantID uint64, orderNo string) ([]executor.SplitExecutionDetail, error)
 }
 
-// Prechecker 前置对账器。
+// Prechecker 前置对账器（recon/job/precheck 实现）。
 type Prechecker interface {
-	Check(ctx context.Context, merchantID uint64, start, end time.Time) (*recon.CheckResult, error)
+	Check(ctx context.Context, merchantID uint64, start, end time.Time) (*domain.CheckResult, error)
 }

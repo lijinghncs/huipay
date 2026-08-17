@@ -36,7 +36,7 @@ type StatsSideFetcher interface {
 
 // JournalSideFetcher 账本分录取数端口（执行后对账本地侧）。
 type JournalSideFetcher interface {
-	SumByOrderForMerchants(ctx context.Context, merchantIDs []uint64, start, end time.Time) (map[string]int64, error)
+	SumByOrderNos(ctx context.Context, orderNos []string) (map[string]int64, error)
 }
 
 // ExecutionSideFetcher 分账执行取数端口（执行后对账对端侧）。

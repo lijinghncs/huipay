@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/huipay/huipay-backend/infra/errs"
+	reconrepo "github.com/huipay/huipay-backend/internal/recon/repository"
 	"github.com/huipay/huipay-backend/internal/split/event"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 )
@@ -19,8 +20,8 @@ type ExceptionPage struct {
 
 // DiffPage 对账差异分页结果。
 type DiffPage struct {
-	Items []repository.ReconcileDiffModel `json:"items"`
-	Total int64                           `json:"total"`
+	Items []reconrepo.DiffModel `json:"items"`
+	Total int64                 `json:"total"`
 }
 
 // AuditItem 审计记录项。
@@ -81,7 +82,7 @@ func (s *Service) ResolveReconcileDiff(ctx context.Context, merchantID uint64, d
 		return errs.New(errs.CodeInvalidParams, "diff not found or not owned by merchant", 200)
 	}
 
-	ok, err := s.diffRepo.Resolve(ctx, diffID, merchantID)
+	ok, err := s.diffRepo.Resolve(ctx, merchantID, diffID)
 	if err != nil {
 		return errs.Wrap(errs.CodeInternalError, "resolve reconcile diff failed", 200, err)
 	}

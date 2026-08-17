@@ -1,8 +1,8 @@
 # 对账模块架构改进方案（V2 · 低耦合高内聚重构）
 
-> 版本：v1.1
+> 版本：v2.0
 > 日期：2026-08-17
-> 状态：评审通过，实施中
+> 状态：已实施（P0–P4 全部落地，编译/单测/真实库冒烟通过）
 >
 > 本文档为对账域的架构改进方案（不涉及功能需求变更），目标：
 > 1. 将散落在 4 处的对账代码收敛为独立限界上下文 `internal/recon`
@@ -263,3 +263,52 @@ type ChannelBillFetcher interface {
 | Q1 | 重构力度 | **A. 完整版（P0–P4，独立 recon 域）** |
 | Q2 | P3 时机 | **立即** |
 | Q3 | 渠道差异 SHORT 单的 `merchant_id` 归属 | **经 `t_order` 关联回填**，关联不上保持 NULL |
+
+---
+
+## 十、实施记录（2026-08-17 落地）
+
+P0–P4 全部完成。最终落地的包结构与端口签名与 §四/§五 草案基本一致，以下为实际实现与草案的偏差点及原因。
+
+### 10.1 落地的包结构
+
+```
+internal/recon/
+├── domain/domain.go         # Diff/DiffType/LocalOrder/BillEntry/OrderExecSum/CheckResult
+├── compare/compare.go       # Totals / Rows[K] / MatchBills（纯函数，全覆盖单测）
+├── ports/ports.go           # DiffStore/AuditRecorder/RunLogger/Observer + 5 个 Fetcher 端口
+├── engine/engine.go         # ScheduledJob 契约（定时任务名 + Run）
+├── job/precheck/            # 前置对账（迁自 split/recon，保留 domain.CheckResult 兼容签名）
+├── job/postsplit/           # 执行后对账（迁自 split/scheduler/reconcile_daily.go）
+├── job/channel/             # 渠道对账（迁自 payment/reconcile.Reconcile）
+├── adapter/                 # gorm 取数适配器（scope SQL 原样搬入）+ MySQL 冒烟测试
+├── repository/diff_repo.go  # DiffStore：t_reconcile_diff 唯一写入/查询入口
+└── scheduler/scheduler.go   # framework 注册与窗口（postsplit + channel）
+```
+
+删除：`split/recon/`、`split/scope/`、`split/scheduler/reconcile_daily.go`、`split/repository/reconcile_diff_repo.go`、`payment/reconcile/wechat_store.go`、`payment/reconcile/scheduler/`、`payment/reconcile/reconcile_test.go`。`payment/reconcile` 仅保留 `Downloader`/`parseBill`。
+
+### 10.2 与草案的偏差
+
+| 偏差点 | 草案 | 实际实现 | 原因 |
+|---|---|---|---|
+| 仓储类型名 | `DiffRepo` | `DiffStore`（构造 `NewDiffStore`） | 与端口 `ports.DiffStore` 命名对齐 |
+| `query` 包 | 独立只读查询服务 | **未单独建包**，查询能力内聚在 `DiffStore`（`ListForMerchant`/`ListByMerchantAndType`/`GetByID`），split Service 与 admin SplitManageService 直接持有 `*reconrepo.DiffStore` | 查询即仓储读方法，单独 query 包会引入无业务逻辑的透传层 |
+| `engine.Run` 编排 | 统一 runlog→fetch→compare→persist | `engine` 仅定义 `ScheduledJob` 契约；runlog 由 framework `Handle.Start` 统一承担，各 Job 内部自持 fetch→compare→persist | framework 已在调度层写 runlog，避免重复；Job 保留编排自由度 |
+| channel 比对器 | `compare.Rows` 双键 | 独立 `compare.MatchBills`（transaction_id 优先、order_no 回退） | 双键回退匹配无法用单一 map 归约，独立纯函数更清晰且全覆盖单测 |
+| postsplit 账本侧 | `SumSplitCreditByOrders` | `JournalSideFetcher.SumByOrderNos` | 命名贴近 SQL 语义 |
+
+### 10.3 关键行为保持不变（回归验证）
+
+- 前置对账口径 SQL（`LayerAQuery`/`LayerBQuery`/`StatsSumQuery`/`StatsRowsQuery`/`SameScopeFilter`）逐字搬入 `recon/adapter/scope.go`，与 git 原版逐块比对一致。
+- 分账阻断错误码 `CodeReconcileFailedTotal`/`CodeReconcileFailedDetail` 与 HTTP 200+code 语义不变。
+- 调度任务名 `split_daily_reconcile`（02:30）、`reconcile_daily`（09:00）、`split_precheck`（异常 runlog）沿用，对账中心 runlog 连续。
+- 商户端/管理端差异列表、核销接口出入参不变，handler 零改动。
+
+### 10.4 验证结果
+
+- `go build ./...` 通过；`internal/recon`/`split`/`admin`/`payment/reconcile` 单测全绿。
+- 新增 `recon/adapter/smoke_mysql_test.go`（`HUIPAY_SMOKE_DSN` 门控）在真实 MySQL 上验证全部取数 SQL 可执行、列名与 schema 匹配。
+- 服务以新二进制在预览端口重启，`/v1/admin/scheduler/tasks` 经预览代理返回鉴权响应，链路正常。
+
+> 遗留观察项：P3 调度由自有 ticker 切到 framework Runner，需观察一个完整运行周期（次日 09:00）的 runlog 与差异产出。

@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
+	reconrepo "github.com/huipay/huipay-backend/internal/recon/repository"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	statsrepo "github.com/huipay/huipay-backend/internal/stats/repository"
 	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
@@ -19,7 +20,7 @@ type SplitManageService struct {
 	db        *gorm.DB
 	dailyRepo *repository.DailyExecutionRepo
 	auditRepo *repository.SplitAuditRepo
-	diffRepo  *repository.ReconcileDiffRepo
+	diffRepo  *reconrepo.DiffStore
 	statsSvc  *statsservice.Service
 	logger    *zap.Logger
 }
@@ -29,7 +30,7 @@ func NewSplitManageService(
 	db *gorm.DB,
 	dailyRepo *repository.DailyExecutionRepo,
 	auditRepo *repository.SplitAuditRepo,
-	diffRepo *repository.ReconcileDiffRepo,
+	diffRepo *reconrepo.DiffStore,
 	statsSvc *statsservice.Service,
 	logger *zap.Logger,
 ) *SplitManageService {
@@ -110,8 +111,8 @@ func (s *SplitManageService) ListAudits(ctx context.Context, f AuditFilter) (*Au
 
 // DiffPage 对账差异分页结果。
 type DiffPage struct {
-	Items []repository.ReconcileDiffModel `json:"items"`
-	Total int64                            `json:"total"`
+	Items []reconrepo.DiffModel `json:"items"`
+	Total int64                 `json:"total"`
 }
 
 // DiffFilter 对账差异筛选。
@@ -132,7 +133,7 @@ func (s *SplitManageService) ListDiffs(ctx context.Context, f DiffFilter) (*Diff
 	if f.PageSize <= 0 || f.PageSize > 200 {
 		f.PageSize = 20
 	}
-	rows, total, err := s.diffRepo.ListByMerchantAndType(ctx, f.MerchantID, f.DiffType, f.Start, f.End, (f.Page-1)*f.PageSize, f.PageSize)
+	rows, total, err := s.diffRepo.ListByMerchantAndType(ctx, f.MerchantID, f.DiffType, nil, f.Start, f.End, (f.Page-1)*f.PageSize, f.PageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +205,7 @@ func (s *SplitManageService) ReopenExecution(ctx context.Context, orderNo string
 
 // ResolveReconcileDiff 管理端核销对账差异（跨商户）+ 审计。
 func (s *SplitManageService) ResolveReconcileDiff(ctx context.Context, id, operatorID uint64) (bool, error) {
-	ok, err := s.diffRepo.ResolveById(ctx, id)
+	ok, err := s.diffRepo.ResolveByID(ctx, id)
 	if err != nil {
 		return false, err
 	}

@@ -42,7 +42,7 @@
 │   ├── .coze                # sub_id=16285581, project_type=backend
 │   ├── cmd/server/main.go   # 启动入口
 │   ├── infra/               # 基础设施层（config/db/migrator/obs/prom）
-│   ├── internal/            # 业务逻辑（order/payment/account/merchant/split/store/stats/admin）
+│   ├── internal/            # 业务逻辑（order/payment/account/merchant/split/store/stats/admin/recon）
 │   │   └── split/           # 分账模块（P0-P5 重构后：高内聚低耦合）
 │   │       ├── alloc/       # 分配方案纯函数计算（无外部依赖，可单测）
 │   │       ├── event/       # 领域事件 + outbox 轮询 + 内存总线（P3）
@@ -71,9 +71,17 @@
 │   │       │   ├── status_sync.go       # 状态回写 + 指标 + 事件发布 + determineFinalStatus
 │   │       │   └── balance_gate.go      # 余额预校验
 │   │       ├── rule/        # 规则引擎（DSL 解析 + 匹配）
-│   │       ├── recon/       # 前置对账（双层 Prechecker）
-│   │       ├── scheduler/   # 补偿调度（依赖 ports.Executor 接口）+ 重算 + 日对账
-│   │       └── repository/  # 数据访问（11 个表）
+│   │       ├── scheduler/   # 补偿调度（依赖 ports.Executor 接口）+ 重算
+│   │       └── repository/  # 数据访问（10 个表）
+│   ├── internal/recon/      # 对账域（独立限界上下文，V2 重构后）
+│   │   ├── domain/          # Diff/DiffType/CheckResult 等纯领域模型
+│   │   ├── compare/         # 纯函数比对器（Totals/Rows/MatchBills）
+│   │   ├── ports/           # DiffStore/AuditRecorder/RunLogger/Observer + Fetcher 端口
+│   │   ├── engine/          # ScheduledJob 契约
+│   │   ├── job/             # precheck（前置）/ postsplit（执行后）/ channel（渠道）
+│   │   ├── adapter/         # gorm 取数适配器（口径 SQL 集中）+ MySQL 冒烟测试
+│   │   ├── repository/      # DiffStore：t_reconcile_diff 唯一写入/查询入口
+│   │   └── scheduler/       # framework 任务注册与窗口
 │   └── Makefile             # 本地开发命令
 └── docs/                    # 产品方案/技术方案/设计文档
 ```
@@ -95,6 +103,13 @@
   - `internal/split/handler/` — 拆为 5 文件 ✅
   - `internal/split/scheduler/compensate.go` — 依赖 ports.Executor 接口 ✅
   - 入口：`handler.New(svc, logger)` → `service.NewService(...)`
+- **对账域（V2 重构，docs/reconcile-architecture-v2.md）**：
+  - `internal/recon/` — 独立限界上下文，三层对账（前置/执行后/渠道）统一编排
+  - 依赖方向：split/payment → recon（recon 不 import 任何业务域）；跨域取数走 ports Fetcher，main.go 装配适配器
+  - `repository.DiffStore` — t_reconcile_diff 唯一写入/查询入口；幂等按「商户+业务日+类型+未核销」清理重写（修复渠道对账按 biz_date 全清误删分账差异的缺陷）
+  - 调度任务：`split_daily_reconcile`（02:30）、`reconcile_daily`（09:00），均注册 framework Runner（自带 runlog）+ 手动触发
+  - 前置对账异常 runlog 名 `split_precheck`；渠道 SHORT 单商户归属经 t_order 关联回填（查不到留 NULL）
+  - 差错中心/管理端查询：split service 与 admin service 直接使用 recon DiffStore（未设 query 包）；ListExceptions/ListAudits 仍属 split 域
 - **单元测试覆盖**：
   - `alloc` — 比例分配、固定金额、末笔补齐、ALL_STORES 展开、超总额拒绝、边界 ✅
   - `state` — 8 状态穷举 + 非法转移 ✅
@@ -103,8 +118,10 @@
   - `event/handler` — DEAD 告警、SUCCESS 不告警、无效载荷、各事件类型 ✅
   - `event/outbox` — SQLite 集成测试：Insert/Poll/MarkProcessed/MarkFailed/Delete/PublishEvent/OnConflict ✅
   - `executor/status_sync` — determineFinalStatus 纯函数：SUCCESS/PARTIAL/TIMEOUT/DEAD 穷举 ✅
-  - `scope` — SameScope/Layer/HasMissing/Stats 各种 SQL 生成 ✅
-  - 待补充：`service/`、`handler/`、`scheduler/`、`recon/`、`repository/`
+  - `recon/compare` — Totals/Rows/MatchBills（LONG/SHORT/MISMATCH/双键匹配）✅
+  - `recon/repository` — SQLite 集成测试：写入幂等、已核销保留、跨类型隔离、查询过滤、核销 ✅
+  - `recon/adapter` — 口径 SQL 断言 + MySQL 冒烟测试（HUIPAY_SMOKE_DSN 门控，默认跳过）✅
+  - 待补充：`service/`、`handler/`、`scheduler/`、`repository/`
 - **事件类型**：`SPLIT_ORDER_EXECUTED`、`SPLIT_BILL_APPROVED`、`SPLIT_BILL_REJECTED`、`RECONCILE_DIFF_RESOLVED`
 
 ## 运行与预览

@@ -21,6 +21,7 @@ import (
 	"github.com/huipay/huipay-backend/internal/split/alloc"
 	"github.com/huipay/huipay-backend/internal/split/event"
 	"github.com/huipay/huipay-backend/internal/split/ports"
+	reconrepo "github.com/huipay/huipay-backend/internal/recon/repository"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
 )
@@ -33,7 +34,7 @@ type Service struct {
 	billRepo         *repository.SplitBillRepo
 	billBizDateRepo  *repository.BillBizDateRepo
 	dailyExecRepo    *repository.DailyExecutionRepo
-	diffRepo         *repository.ReconcileDiffRepo
+	diffRepo         *reconrepo.DiffStore
 	auditRepo        *repository.SplitAuditRepo
 	orderStatusRepo  *repository.SplitOrderStatusRepo
 	walletResolver   ports.WalletResolver
@@ -50,7 +51,7 @@ func NewService(
 	billRepo *repository.SplitBillRepo,
 	billBizDateRepo *repository.BillBizDateRepo,
 	dailyExecRepo *repository.DailyExecutionRepo,
-	diffRepo *repository.ReconcileDiffRepo,
+	diffRepo *reconrepo.DiffStore,
 	auditRepo *repository.SplitAuditRepo,
 	orderStatusRepo *repository.SplitOrderStatusRepo,
 	walletResolver ports.WalletResolver,
@@ -255,7 +256,7 @@ func (s *Service) ownsBizID(ctx context.Context, merchantID uint64, bizID string
 		}
 	}
 	var count int64
-	err := s.diffRepo.DB().WithContext(ctx).Raw(
+	err := s.billRepo.DB().WithContext(ctx).Raw(
 		`SELECT
 			(SELECT COUNT(*) FROM t_order WHERE order_no = ? AND merchant_id = ? AND deleted_at IS NULL)
 			+ (SELECT COUNT(*) FROM t_split_bill WHERE batch_no = ? AND merchant_id = ?)`,

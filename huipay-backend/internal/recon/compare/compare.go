@@ -69,7 +69,7 @@ func MatchBills(local []domain.LocalOrder, bill []domain.BillEntry) BillReport {
 			rep.Long = append(rep.Long, domain.Diff{
 				OrderNo:       o.OrderNo,
 				TransactionID: o.ChannelTradeNo,
-				LocalAmount:   o.PaidAmount,
+				LocalAmount:   domain.Int64(o.PaidAmount),
 				Reason:        domain.ReasonLocalOnly,
 			})
 			continue
@@ -84,8 +84,8 @@ func MatchBills(local []domain.LocalOrder, bill []domain.BillEntry) BillReport {
 			rep.Mismatch = append(rep.Mismatch, domain.Diff{
 				OrderNo:       o.OrderNo,
 				TransactionID: entry.TransactionID,
-				LocalAmount:   o.PaidAmount,
-				RemoteAmount:  entry.OrderAmount,
+				LocalAmount:   domain.Int64(o.PaidAmount),
+				RemoteAmount:  domain.Int64(entry.OrderAmount),
 				Reason:        domain.ReasonMismatch,
 			})
 		}
@@ -101,7 +101,7 @@ func MatchBills(local []domain.LocalOrder, bill []domain.BillEntry) BillReport {
 		rep.Short = append(rep.Short, domain.Diff{
 			OrderNo:       e.OutTradeNo,
 			TransactionID: e.TransactionID,
-			RemoteAmount:  e.OrderAmount,
+			RemoteAmount:  domain.Int64(e.OrderAmount),
 			Reason:        domain.ReasonRemoteOnly,
 		})
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
 	"github.com/huipay/huipay-backend/infra/config"
 	"github.com/huipay/huipay-backend/infra/db"
@@ -53,9 +54,17 @@ import (
 	"github.com/huipay/huipay-backend/internal/payment/channel/wechat"
 	mockchannel "github.com/huipay/huipay-backend/internal/payment/channel/mock"
 	reconcilesvc "github.com/huipay/huipay-backend/internal/payment/reconcile"
-	reconcilesched "github.com/huipay/huipay-backend/internal/payment/reconcile/scheduler"
 	"github.com/huipay/huipay-backend/internal/middleware"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
+
+	reconadapter "github.com/huipay/huipay-backend/internal/recon/adapter"
+	recondomain "github.com/huipay/huipay-backend/internal/recon/domain"
+	channeljob "github.com/huipay/huipay-backend/internal/recon/job/channel"
+	precheckjob "github.com/huipay/huipay-backend/internal/recon/job/precheck"
+	postsplitjob "github.com/huipay/huipay-backend/internal/recon/job/postsplit"
+	reconrepo "github.com/huipay/huipay-backend/internal/recon/repository"
+	reconsched "github.com/huipay/huipay-backend/internal/recon/scheduler"
+	"github.com/huipay/huipay-backend/internal/scheduler/framework"
 
 	splithandler "github.com/huipay/huipay-backend/internal/split/handler"
 	splitservice "github.com/huipay/huipay-backend/internal/split/service"
@@ -63,7 +72,6 @@ import (
 	splitexec "github.com/huipay/huipay-backend/internal/split/executor"
 	splitsched "github.com/huipay/huipay-backend/internal/split/scheduler"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
-	recon "github.com/huipay/huipay-backend/internal/split/recon"
 	"github.com/huipay/huipay-backend/internal/split/event"
 
 	statsrepo "github.com/huipay/huipay-backend/internal/stats/repository"
@@ -88,6 +96,53 @@ func (w *walletAdapter) GetWalletByEntityType(ctx context.Context, entityID uint
 		return 0, errs.New(errs.CodeInternalError, "wallet not found", 200)
 	}
 	return wallet.ID, nil
+}
+
+// auditRecorderAdapter 适配分账审计仓储 → recon 审计端口。
+type auditRecorderAdapter struct {
+	repo *splitrepo.SplitAuditRepo
+}
+
+func (a *auditRecorderAdapter) Record(ctx context.Context, bizType, bizID, action, operatorType string, operatorID uint64, detail any) {
+	_ = a.repo.WriteAction(ctx, bizType, bizID, action, operatorType, operatorID, detail)
+}
+
+// precheckObserver 前置对账差异打点。
+type precheckObserver struct{}
+
+func (precheckObserver) ObservePrecheck(label string) {
+	prom.SplitPrecheckDiffTotal.WithLabelValues(label).Inc()
+}
+
+// runLoggerAdapter 前置对账异常时补写对账中心运行日志（db 为 nil 时跳过）。
+type runLoggerAdapter struct {
+	db *gorm.DB
+}
+
+func (a *runLoggerAdapter) Log(ctx context.Context, name string, bizDate time.Time, rows int64, runErr error) {
+	if a.db == nil {
+		return
+	}
+	_, _ = framework.RunLogged(ctx, a.db, framework.GlobalInstanceID(), name, &bizDate, func() (int64, error) {
+		return rows, runErr
+	})
+}
+
+// billFetcherAdapter 适配微信账单下载器 → recon 渠道账单端口。
+type billFetcherAdapter struct {
+	dl *reconcilesvc.Downloader
+}
+
+func (a *billFetcherAdapter) FetchBill(ctx context.Context, bizDate string) ([]recondomain.BillEntry, error) {
+	entries, err := a.dl.DownloadBill(ctx, bizDate)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]recondomain.BillEntry, len(entries))
+	for i, e := range entries {
+		out[i] = recondomain.BillEntry{TransactionID: e.TransactionID, OutTradeNo: e.OutTradeNo, OrderAmount: e.OrderAmount}
+	}
+	return out, nil
 }
 
 
@@ -264,19 +319,25 @@ func main() {
 	splitBillRepo := splitrepo.NewSplitBillRepo(dbConn.Master)
 	splitBillBizDateRepo := splitrepo.NewBillBizDateRepo(dbConn.Master)
 	splitDailyExecRepo := splitrepo.NewDailyExecutionRepo(dbConn.Master)
-	splitDiffRepo := splitrepo.NewReconcileDiffRepo(dbConn.Master)
 	splitRevenueRepo := splitrepo.NewStoreRevenueRepo(dbConn.Master)
 
 	// 门店订单日报服务（T+1 02:00 聚合）
 	statsRepo := statsrepo.NewStoreDailyStatsRepo(dbConn.Master)
 	statsSvc := statsservice.NewService(statsRepo, dbConn.Master, logger)
 
+	// recon 域：差异统一读写入口 + 各侧取数适配器
+	reconDiffRepo := reconrepo.NewDiffStore(dbConn.Master)
+	orderFetcher := reconadapter.NewOrderFetcher(dbConn.Master)
+	statsFetcher := reconadapter.NewStatsFetcher(dbConn.Master, statsSvc)
+	splitFetcher := reconadapter.NewSplitFetcher(dbConn.Master)
+
 	// 分账前置对账器（依赖 statsSvc 自动补跑 + 差异落库）
-	prechecker := recon.NewPrechecker(dbConn.Master, statsSvc, splitDiffRepo, splitAuditRepo, logger)
+	prechecker := precheckjob.NewPrechecker(orderFetcher, statsFetcher, reconDiffRepo,
+		&auditRecorderAdapter{repo: splitAuditRepo}, precheckObserver{}, &runLoggerAdapter{db: dbConn.Master}, logger)
 	splitSvc := splitservice.NewService(
 		ruleEngine, splitExec,
 		splitRuleRepo, splitBillRepo,
-		splitBillBizDateRepo, splitDailyExecRepo, splitDiffRepo,
+		splitBillBizDateRepo, splitDailyExecRepo, reconDiffRepo,
 		splitAuditRepo, splitOrderStatusRepo,
 				&walletAdapter{accountSvc}, splitRevenueRepo,
 		prechecker, splitOutboxRepo,
@@ -288,7 +349,7 @@ func main() {
 	adminSchedulerH := adminhandler.NewSchedulerHandler(adminSchedulerSvc, logger)
 	adminStoreStatsH := adminhandler.NewStoreStatsHandler(statsSvc, logger)
 	adminSplitManageSvc := adminservice.NewSplitManageService(
-		dbConn.Master, splitDailyExecRepo, splitAuditRepo, splitDiffRepo, statsSvc, logger,
+		dbConn.Master, splitDailyExecRepo, splitAuditRepo, reconDiffRepo, statsSvc, logger,
 	)
 	adminSplitManageH := adminhandler.NewSplitManageHandler(adminSplitManageSvc, logger)
 	adminAuthSvc := adminservice.NewAdminAuthService(cfg.AdminUsername, cfg.AdminPassword, cfg.AuthSecret, logger)
@@ -468,8 +529,11 @@ func main() {
 
 		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, wxManager, 30*time.Second, logger).Start(context.Background())
 		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
+		// 渠道日对账：T+1 09:00 本地已支付订单 vs 微信账单（接入监测框架，支持手动触发）
 		if billDownloader != nil {
-			go reconcilesched.StartDailyReconcile(context.Background(), billDownloader, dbConn.Master, logger)
+			channelJob := channeljob.NewJob(orderFetcher, &billFetcherAdapter{dl: billDownloader}, reconDiffRepo, logger)
+			channelHandle := reconsched.NewChannelHandle(dbConn.Master, channelJob, logger)
+			go channelHandle.Start(context.Background(), reconsched.ChannelRunnable(channelJob), reconsched.ChannelOptions())
 		}
 		// 分账补偿调度：悬挂检测 + 失败/部分失败订单自动重入（30s 轮询）
 		compSched := splitsched.NewCompensateScheduler(splitOrderStatusRepo, splitExec, accountSvc, logger)
@@ -481,10 +545,11 @@ func main() {
 		statsHandle := statsscheduler.NewStoreDailyStatsScheduler(dbConn.Master, statsSvc, logger)
 		go statsHandle.Start(context.Background(), statsscheduler.Runnable(statsSvc), statsscheduler.Options())
 		// 分账日对账：T+1 02:30 比对本地账本与执行记录，差异落库 + 告警（接入监测框架，支持手动触发）
-		reconcileHandle := splitsched.NewSplitReconcileScheduler(dbConn.Master, splitDiffRepo, alerter, logger)
+		postSplitJob := postsplitjob.NewJob(splitFetcher, splitFetcher, reconDiffRepo, alerter, logger)
+		reconcileHandle := reconsched.NewPostSplitHandle(dbConn.Master, postSplitJob, logger)
 		go reconcileHandle.Start(context.Background(),
-			splitsched.ReconcileRunnable(dbConn.Master, splitDiffRepo, alerter, logger),
-			splitsched.ReconcileOptions())
+			reconsched.PostSplitRunnable(postSplitJob),
+			reconsched.PostSplitOptions())
 	}
 
 	// 9. 启动服务并优雅退出

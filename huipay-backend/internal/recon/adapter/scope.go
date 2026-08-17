@@ -1,16 +1,15 @@
-// 包 scope 提供分账/对账相关的统一口径过滤器与预编译 SQL。
+// Package adapter 提供对账各侧数据的 gorm 取数适配器。
 //
-// 所有读 t_order 的聚合查询（日报生成、Prechecker、补跑、回算 split_status）必须使用
-// SameScopeFilter 或 LEFT JOIN 优化版本，保证与门店日报聚合 SQL 完全一致，避免口径错位
-// 导致的对账失败（V2 评审问题 🔴2）。
-package scope
+// 本文件承载分账对账口径 SQL（迁自 split/scope，口径逐字保留）：
+// 订单侧与日报侧必须使用同一过滤口径，否则对账结果无意义。
+package adapter
 
 import "time"
 
-// SameScopeFilter 返回「同一聚合口径」的 WHERE 片段。
+// SameScopeFilter 返回"分账口径"订单过滤条件与参数（用于单测断言与未来扩展）。
 //
-// 口径定义：
-//   - PAID 状态、deleted_at IS NULL
+// 分账口径（与 internal/split/repository/store_revenue_repo.go 的 splitExclusion 对齐）：
+//   - merchant_id 匹配、PAID 状态、deleted_at IS NULL
 //   - paid_at ∈ [from, to)
 //   - store_id NOT NULL 且 t_store.status = 1（门店未删除）
 //   - 排除 t_split_execution.status = 'SUCCESS'（已成功分账）
@@ -89,25 +88,3 @@ SELECT biz_date, store_id, paid_amount AS stats_total
 FROM t_store_daily_stats
 WHERE merchant_id = ?
   AND biz_date >= ? AND biz_date < ?`
-
-// HasMissingQuery 检查 [from, to) 区间内是否存在缺失 biz_date 的 SQL。
-// 返回一个 0/1：1 表示区间内有缺失或日报行数与期望不一致。
-const HasMissingQuery = `
-SELECT COUNT(*) AS missing_days
-FROM (
-  SELECT DATE(d.day) AS biz_date FROM (
-    SELECT DATE_ADD(?, INTERVAL n.n DAY) AS day
-    FROM (
-      SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
-      UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
-      UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12 UNION ALL SELECT 13 UNION ALL SELECT 14
-      UNION ALL SELECT 15 UNION ALL SELECT 16 UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19
-      UNION ALL SELECT 20 UNION ALL SELECT 21 UNION ALL SELECT 22 UNION ALL SELECT 23 UNION ALL SELECT 24
-      UNION ALL SELECT 25 UNION ALL SELECT 26 UNION ALL SELECT 27 UNION ALL SELECT 28 UNION ALL SELECT 29
-    ) n
-    WHERE DATE_ADD(?, INTERVAL n.n DAY) < ?
-  ) d
-  LEFT JOIN t_store_daily_stats s
-    ON s.merchant_id = ? AND s.biz_date = DATE(d.day) AND s.paid_amount > 0
-  WHERE s.id IS NULL
-) m`
