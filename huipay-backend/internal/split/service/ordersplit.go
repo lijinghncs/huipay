@@ -13,6 +13,7 @@ import (
 	"github.com/huipay/huipay-backend/internal/split/executor"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
+	"github.com/huipay/huipay-backend/internal/split/state"
 )
 
 // ExecuteRequest 分账执行请求（HTTP 层）。
@@ -424,7 +425,7 @@ func (s *Service) ReopenExecution(ctx context.Context, merchantID uint64, orderN
 	if st == nil || st.MerchantID != merchantID {
 		return errs.New(errs.CodeInvalidParams, "split execution not found", 200)
 	}
-	if st.Status != repository.OrderStatusDead {
+	if st.Status != string(state.Dead) {
 		return errs.New(errs.CodeInvalidParams, "仅重试耗尽（DEAD）的订单可复位重开", 200)
 	}
 	ok, err := s.orderStatusRepo.Reopen(ctx, orderNo)

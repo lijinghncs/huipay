@@ -152,7 +152,7 @@ func (r *SplitOrderStatusRepo) Reopen(ctx context.Context, orderNo string) (bool
 	res := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
 		Where("order_no = ? AND status = ?", orderNo, state.Dead).
 		Updates(map[string]any{
-			"status":        OrderStatusFailed,
+			"status":        state.Failed,
 			"attempt_count": 0,
 			"next_retry_at": &now,
 		})

@@ -20,7 +20,7 @@ admin_username: "admin"
 admin_password: "admin123"
 
 # 收银台 H5 地址前缀，付款码二维码 checkout_url 据此生成（生产应为 https://checkout.huipay.cn）
-checkout_base_url: "https://cca22a61-9142-41c6-ba40-9be4b39a7e1b-5000.dev.coze.site"
+checkout_base_url: "https://cca22a61-9142-41c6-ba40-9be4b39a7e1b-5000.dev.coze.site/checkout"
 
 # MySQL 主从 DSN（HUIPAY_MYSQL_MASTER / HUIPAY_MYSQL_SLAVE 可通过环境变量覆盖）
 mysql_master: "root:lijing123!@#@tcp(127.0.0.1:3306)/huipay?charset=utf8mb4&parseTime=True&loc=Local"

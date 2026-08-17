@@ -25,7 +25,7 @@ import (
 )
 
 // maxAttempts 通道调用与内部转账的最大尝试次数。
-const maxAttempts = 3
+const maxAttempts = splitcfg.MaxChannelAttempts
 
 // 分账模式常量（C1 层：通道降级闸门，存 t_entity.split_mode）。
 const (
@@ -683,7 +683,7 @@ func (e *Executor) upsertOrderStatus(ctx context.Context, req *ExecuteRequest, t
 		RuleSnapshot:  string(snapshot),
 		TotalAmount:   total,
 		ReceiverCount: len(req.Allocations),
-		Status:        state.Processing,
+		Status:        string(state.Processing),
 		Degraded:      degraded,
 	}
 	return e.orderStatusRepo.DB().WithContext(ctx).
@@ -737,8 +737,8 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	attempt := st.AttemptCount + 1
 	var nextRetryAt *time.Time
 	if status == state.Partial || status == state.Failed {
-		if attempt < splitrepo.MaxRetryAttempts {
-			t := time.Now().Add(splitrepo.RetryBackoff(attempt))
+		if attempt < splitcfg.MaxRetryAttempts {
+			t := time.Now().Add(splitcfg.RetryBackoff(attempt))
 			nextRetryAt = &t
 		} else {
 			status = state.Dead
@@ -750,11 +750,11 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 		}
 	}
 
-	if err := e.orderStatusRepo.UpdateResult(ctx, req.OrderNo, successCount, status, attempt, nextRetryAt, lastErr); err != nil {
+	if err := e.orderStatusRepo.UpdateResult(ctx, req.OrderNo, successCount, string(status), attempt, nextRetryAt, lastErr); err != nil {
 		return err
 	}
 	e.syncOrderSplitStatus(ctx, req.OrderNo, status)
-	prom.SplitOrderTotal.WithLabelValues(status).Inc()
+	prom.SplitOrderTotal.WithLabelValues(string(status)).Inc()
 	if status == state.Success {
 		prom.SplitSuccessRate.Set(1)
 	} else {
@@ -762,18 +762,18 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	}
 	if lastErr != "" {
 		e.logger.Warn("split order finalized with error",
-			zap.String("order_no", req.OrderNo), zap.String("status", status), zap.Int("success", successCount))
+			zap.String("order_no", req.OrderNo), zap.String("status", string(status)), zap.Int("success", successCount))
 	}
 	// 非成功终态需向上层返回错误，避免服务层误报成功（部分成功也返回，交由补偿调度续跑）
 	if status != state.Success {
-		return fmt.Errorf("split order %s: %s", status, lastErr)
+		return fmt.Errorf("split order %s: %s", string(status), lastErr)
 	}
 	return nil
 }
 
 // syncOrderSplitStatus 分账定态后同步回写 t_order.split_status（仅终态）：
 // SUCCESS -> SUCCESS；FAILED/DEAD/SUSPENDED -> FAILED；PARTIAL 不写（交由补偿续跑）。
-func (e *Executor) syncOrderSplitStatus(ctx context.Context, orderNo, status string) {
+func (e *Executor) syncOrderSplitStatus(ctx context.Context, orderNo string, status state.Status) {
 	var orderSplit string
 	switch status {
 	case state.Success:
