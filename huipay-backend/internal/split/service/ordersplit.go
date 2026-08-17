@@ -29,9 +29,11 @@ type ExecuteRequest struct {
 
 // ExecuteResponse 分账执行响应。
 type ExecuteResponse struct {
-	OrderNo     string                `json:"order_no"`
-	Allocations []executor.Allocation `json:"allocations"`
-	RuleCode    string                `json:"rule_code"`
+	OrderNo       string                `json:"order_no"`
+	Allocations   []executor.Allocation `json:"allocations"`
+	RuleCode      string                `json:"rule_code"`
+	Status        string                `json:"status"`
+	DegradedCount int                   `json:"degraded_count"`
 }
 
 // Execute 执行分账：按规则引擎匹配（支持门店维度），解析分配方案后落地账本。
