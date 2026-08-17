@@ -18,6 +18,7 @@ import (
 	"github.com/huipay/huipay-backend/internal/account/ledger"
 	"github.com/huipay/huipay-backend/internal/account/repository"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
+	"github.com/huipay/huipay-backend/internal/split/state"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/payment/channel"
 	"github.com/huipay/huipay-backend/internal/payment/router"
@@ -682,7 +683,7 @@ func (e *Executor) upsertOrderStatus(ctx context.Context, req *ExecuteRequest, t
 		RuleSnapshot:  string(snapshot),
 		TotalAmount:   total,
 		ReceiverCount: len(req.Allocations),
-		Status:        splitrepo.OrderStatusProcessing,
+		Status:        state.Processing,
 		Degraded:      degraded,
 	}
 	return e.orderStatusRepo.DB().WithContext(ctx).
@@ -725,22 +726,22 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	if receiverCount == 0 {
 		receiverCount = len(req.Allocations)
 	}
-	status := splitrepo.OrderStatusSuccess
+	status := state.Success
 	if lastErr != "" {
 		if successCount > 0 && successCount < receiverCount {
-			status = splitrepo.OrderStatusPartial
+			status = state.Partial
 		} else {
-			status = splitrepo.OrderStatusFailed
+			status = state.Failed
 		}
 	}
 	attempt := st.AttemptCount + 1
 	var nextRetryAt *time.Time
-	if status == splitrepo.OrderStatusPartial || status == splitrepo.OrderStatusFailed {
+	if status == state.Partial || status == state.Failed {
 		if attempt < splitrepo.MaxRetryAttempts {
 			t := time.Now().Add(splitrepo.RetryBackoff(attempt))
 			nextRetryAt = &t
 		} else {
-			status = splitrepo.OrderStatusDead
+			status = state.Dead
 			e.logger.Error("split order reached dead after retries",
 				zap.String("order_no", req.OrderNo), zap.String("last_error", lastErr))
 			// 告警：死单需人工介入（差错中心复位重开或管理端核销）
@@ -754,7 +755,7 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	}
 	e.syncOrderSplitStatus(ctx, req.OrderNo, status)
 	prom.SplitOrderTotal.WithLabelValues(status).Inc()
-	if status == splitrepo.OrderStatusSuccess {
+	if status == state.Success {
 		prom.SplitSuccessRate.Set(1)
 	} else {
 		prom.SplitSuccessRate.Set(0)
@@ -764,7 +765,7 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 			zap.String("order_no", req.OrderNo), zap.String("status", status), zap.Int("success", successCount))
 	}
 	// 非成功终态需向上层返回错误，避免服务层误报成功（部分成功也返回，交由补偿调度续跑）
-	if status != splitrepo.OrderStatusSuccess {
+	if status != state.Success {
 		return fmt.Errorf("split order %s: %s", status, lastErr)
 	}
 	return nil
@@ -775,9 +776,9 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 func (e *Executor) syncOrderSplitStatus(ctx context.Context, orderNo, status string) {
 	var orderSplit string
 	switch status {
-	case splitrepo.OrderStatusSuccess:
+	case state.Success:
 		orderSplit = "SUCCESS"
-	case splitrepo.OrderStatusFailed, splitrepo.OrderStatusDead, splitrepo.OrderStatusSuspended:
+	case state.Failed, state.Dead, state.Suspended:
 		orderSplit = "FAILED"
 	default:
 		return

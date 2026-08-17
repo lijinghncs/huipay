@@ -4,10 +4,11 @@ import http from 'node:http';
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
 const BACKENDS = {
-  '/merchant/': { host: 'localhost', port: 5170 },
-  '/admin/':    { host: 'localhost', port: 5171 },
-  '/checkout/': { host: 'localhost', port: 5173 },
-  '/v1/':       { host: 'localhost', port: 5001 },
+  '/merchant/':  { host: 'localhost', port: 5170 },
+  '/admin/':     { host: 'localhost', port: 5171 },
+  '/checkout/v1/': { host: 'localhost', port: 5001 },
+  '/checkout/':  { host: 'localhost', port: 5173 },
+  '/v1/':        { host: 'localhost', port: 5001 },
 };
 
 // 按路径前缀匹配后端
@@ -37,8 +38,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 透传完整 URL（Vite dev server 已配置 --base /merchant/ 等，按完整路径处理）
-  proxyRequest(req, res, match.target, req.url);
+  // 透传 URL，去掉匹配的前缀使其到达后端实际路径
+  const path = match.prefix.startsWith('/checkout/v1/')
+    ? req.url.replace('/checkout', '')
+    : req.url;
+  proxyRequest(req, res, match.target, path);
 });
 
 function proxyRequest(clientReq, clientRes, target, path) {

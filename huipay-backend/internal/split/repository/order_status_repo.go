@@ -6,24 +6,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-)
 
-// SplitOrderStatus 订单级分账状态。
-const (
-	OrderStatusPending   = "PENDING"   // 待处理
-	OrderStatusProcessing = "PROCESSING" // 处理中
-	OrderStatusSuccess   = "SUCCESS"   // 全部成功
-	OrderStatusPartial   = "PARTIAL"   // 部分成功
-	OrderStatusFailed    = "FAILED"    // 全部失败
-	OrderStatusSuspended = "SUSPENDED" // 悬挂（处理中超时）
-	OrderStatusDead      = "DEAD"      // 重试耗尽
-	OrderStatusResolved  = "RESOLVED"  // 人工核销（线下处理完毕，差错闭环）
+	"github.com/huipay/huipay-backend/internal/split/state"
 )
-
-// ExceptionStatuses 差错中心聚合的异常状态集合（含已核销，供运营追溯）。
-var ExceptionStatuses = []string{
-	OrderStatusFailed, OrderStatusPartial, OrderStatusSuspended, OrderStatusDead, OrderStatusResolved,
-}
 
 // SplitOrderStatusModel 分账订单级状态表 GORM 模型（t_split_order_status）。
 type SplitOrderStatusModel struct {
@@ -76,7 +61,7 @@ func (r *SplitOrderStatusRepo) Get(ctx context.Context, orderNo string) (*SplitO
 func (r *SplitOrderStatusRepo) MarkProcessing(ctx context.Context, orderNo string) error {
 	return r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
 		Where("order_no = ?", orderNo).
-		Update("status", OrderStatusProcessing).Error
+		Update("status", state.Processing).Error
 }
 
 // UpdateResult 执行结束后回写成果（成功数/状态/错误/下次重试时间）。attemptCount 为本次后的累计值。
@@ -97,10 +82,10 @@ func (r *SplitOrderStatusRepo) UpdateResult(ctx context.Context, orderNo string,
 func (r *SplitOrderStatusRepo) ClaimRetry(ctx context.Context, orderNo string, now time.Time) (bool, error) {
 	res := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
 		Where("order_no = ?", orderNo).
-		Where("status IN ?", []string{OrderStatusFailed, OrderStatusPartial, OrderStatusSuspended}).
+		Where("status IN ?", []string{string(state.Failed), string(state.Partial), string(state.Suspended)}).
 		Where("attempt_count < ?", maxRetryAttempts).
 		Where("next_retry_at IS NULL OR next_retry_at <= ?", now).
-		Updates(map[string]any{"status": OrderStatusProcessing})
+		Updates(map[string]any{"status": state.Processing})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -110,9 +95,9 @@ func (r *SplitOrderStatusRepo) ClaimRetry(ctx context.Context, orderNo string, n
 // MarkSuspended 悬挂检测：处理中超时的订单置为 SUSPENDED。
 func (r *SplitOrderStatusRepo) MarkSuspended(ctx context.Context, before time.Time) (int64, error) {
 	res := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
-		Where("status = ?", OrderStatusProcessing).
+		Where("status = ?", state.Processing).
 		Where("updated_at < ?", before).
-		Update("status", OrderStatusSuspended)
+		Update("status", state.Suspended)
 	if res.Error != nil {
 		return 0, res.Error
 	}
@@ -123,7 +108,7 @@ func (r *SplitOrderStatusRepo) MarkSuspended(ctx context.Context, before time.Ti
 func (r *SplitOrderStatusRepo) ListRetryCandidates(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	var orderNos []string
 	if err := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
-		Where("status IN ?", []string{OrderStatusFailed, OrderStatusPartial, OrderStatusSuspended}).
+		Where("status IN ?", []string{string(state.Failed), string(state.Partial), string(state.Suspended)}).
 		Where("attempt_count < ?", maxRetryAttempts).
 		Where("next_retry_at IS NULL OR next_retry_at <= ?", now).
 		Order("next_retry_at ASC").
@@ -138,14 +123,14 @@ func (r *SplitOrderStatusRepo) ListRetryCandidates(ctx context.Context, now time
 func (r *SplitOrderStatusRepo) MarkDead(ctx context.Context, orderNo, lastErr string) error {
 	return r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
 		Where("order_no = ?", orderNo).
-		Updates(map[string]any{"status": OrderStatusDead, "last_error": lastErr}).Error
+		Updates(map[string]any{"status": state.Dead, "last_error": lastErr}).Error
 }
 
 // SuspendedCount 统计悬挂（PROCESSING 超时）订单数，供指标上报。
 func (r *SplitOrderStatusRepo) SuspendedCount(ctx context.Context) (int64, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
-		Where("status = ?", OrderStatusProcessing).
+		Where("status = ?", state.Processing).
 		Where("updated_at < ?", time.Now().Add(-10*time.Minute)).
 		Count(&count).Error; err != nil {
 		return 0, err
@@ -165,7 +150,7 @@ func (r *SplitOrderStatusRepo) ResetAttempt(ctx context.Context, orderNo string)
 func (r *SplitOrderStatusRepo) Reopen(ctx context.Context, orderNo string) (bool, error) {
 	now := time.Now()
 	res := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
-		Where("order_no = ? AND status = ?", orderNo, OrderStatusDead).
+		Where("order_no = ? AND status = ?", orderNo, state.Dead).
 		Updates(map[string]any{
 			"status":        OrderStatusFailed,
 			"attempt_count": 0,
@@ -182,8 +167,8 @@ func (r *SplitOrderStatusRepo) Reopen(ctx context.Context, orderNo string) (bool
 func (r *SplitOrderStatusRepo) MarkResolved(ctx context.Context, orderNo string) (bool, error) {
 	res := r.db.WithContext(ctx).Model(&SplitOrderStatusModel{}).
 		Where("order_no = ?", orderNo).
-		Where("status IN ?", []string{OrderStatusDead, OrderStatusFailed, OrderStatusPartial, OrderStatusSuspended}).
-		Update("status", OrderStatusResolved)
+		Where("status IN ?", []string{string(state.Dead), string(state.Failed), string(state.Partial), string(state.Suspended)}).
+		Update("status", state.Resolved)
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -198,7 +183,7 @@ func (r *SplitOrderStatusRepo) ListExceptions(ctx context.Context, merchantID ui
 	if status != "" {
 		db = db.Where("status = ?", status)
 	} else {
-		db = db.Where("(status IN ? OR degraded = 1)", ExceptionStatuses)
+		db = db.Where("(status IN ? OR degraded = 1)", state.ExceptionStatuses)
 	}
 	if degraded != nil {
 		db = db.Where("degraded = ?", *degraded)
@@ -220,7 +205,7 @@ func (r *SplitOrderStatusRepo) ListAllExceptions(ctx context.Context, status str
 	if status != "" {
 		db = db.Where("status = ?", status)
 	} else {
-		db = db.Where("(status IN ? OR degraded = 1)", ExceptionStatuses)
+		db = db.Where("(status IN ? OR degraded = 1)", state.ExceptionStatuses)
 	}
 	if degraded != nil {
 		db = db.Where("degraded = ?", *degraded)
