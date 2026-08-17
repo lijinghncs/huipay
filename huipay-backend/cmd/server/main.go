@@ -64,6 +64,7 @@ import (
 	splitsched "github.com/huipay/huipay-backend/internal/split/scheduler"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
 	recon "github.com/huipay/huipay-backend/internal/split/recon"
+	"github.com/huipay/huipay-backend/internal/split/event"
 
 	statsrepo "github.com/huipay/huipay-backend/internal/stats/repository"
 	statsservice "github.com/huipay/huipay-backend/internal/stats/service"
@@ -246,7 +247,16 @@ func main() {
 	ruleEngine := splitrule.NewEngine()
 	splitOrderStatusRepo := splitrepo.NewSplitOrderStatusRepo(dbConn.Master)
 	splitAuditRepo := splitrepo.NewSplitAuditRepo(dbConn.Master)
-	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, splitOrderStatusRepo, paymentRouter, logger)
+
+	// 事件系统：outbox 仓储 + 内存总线
+	splitOutboxRepo := event.NewOutboxRepo(dbConn.Master)
+	evtBus := event.NewBus()
+	evtBus.Subscribe(event.TypeSplitOrderExecuted, event.SplitOrderExecutedHandler(logger))
+	evtBus.Subscribe(event.TypeSplitBillApproved, event.SplitBillApprovedHandler(logger))
+	evtBus.Subscribe(event.TypeSplitBillRejected, event.SplitBillRejectedHandler(logger))
+	evtBus.Subscribe(event.TypeReconcileDiffResolved, event.LogHandler(logger))
+
+	splitExec := splitexec.NewExecutor(walletRepo, journalRepo, splitOrderStatusRepo, paymentRouter, splitOutboxRepo, logger)
 	// 告警器（企业微信 webhook；alert_webhook_url 空配置时为空操作）
 	alerter := notify.New(cfg.AlertWebhookURL, logger)
 	splitExec.SetAlerter(alerter)
@@ -269,7 +279,7 @@ func main() {
 		splitBillBizDateRepo, splitDailyExecRepo, splitDiffRepo,
 		splitAuditRepo, splitOrderStatusRepo,
 				&walletAdapter{accountSvc}, splitRevenueRepo,
-		prechecker,
+		prechecker, splitOutboxRepo,
 		logger,
 	)
 
@@ -450,8 +460,12 @@ func main() {
 	})
 	r.GET("/metrics", prom.Handler())
 
-	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账 + 分账补偿 + 门店订单日报 + 分账日对账）
+	// 8. 启动定时任务（超时关单 + 幂等键清理 + 每日对账 + 分账补偿 + 门店订单日报 + 分账日对账 + outbox 事件轮询）
 	if dbConn.Master != nil {
+		// outbox 事件轮询：每 5s 拉取待处理事件投递到内存总线
+		evtWorker := event.NewWorker(splitOutboxRepo, evtBus, logger)
+		go evtWorker.Start(context.Background(), 5*time.Second)
+
 		go orderscheduler.NewCloseExpiredScheduler(dbConn.Master, paymentRouter, wxManager, 30*time.Second, logger).Start(context.Background())
 		go orderscheduler.StartIdempotencyCleanup(context.Background(), dbConn.Master, 1*time.Hour, logger)
 		if billDownloader != nil {

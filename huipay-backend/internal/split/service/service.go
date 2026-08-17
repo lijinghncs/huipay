@@ -19,6 +19,7 @@ import (
 	"github.com/huipay/huipay-backend/infra/errs"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/alloc"
+	"github.com/huipay/huipay-backend/internal/split/event"
 	"github.com/huipay/huipay-backend/internal/split/ports"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
@@ -38,6 +39,7 @@ type Service struct {
 	walletResolver   ports.WalletResolver
 	revenueQuerier   repository.StoreRevenueQuerier
 	prechecker       ports.Prechecker
+	outboxRepo       *event.OutboxRepo
 	logger           *zap.Logger
 }
 
@@ -54,6 +56,7 @@ func NewService(
 	walletResolver ports.WalletResolver,
 	revQuerier repository.StoreRevenueQuerier,
 	prechecker ports.Prechecker,
+	outboxRepo *event.OutboxRepo,
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
@@ -67,6 +70,7 @@ func NewService(
 		walletResolver:  walletResolver,
 		revenueQuerier:  revQuerier,
 		prechecker:      prechecker,
+		outboxRepo:      outboxRepo,
 		logger:          logger,
 	}
 }

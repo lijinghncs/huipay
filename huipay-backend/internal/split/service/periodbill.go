@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/huipay/huipay-backend/infra/errs"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
 	"github.com/huipay/huipay-backend/internal/split/alloc"
+	"github.com/huipay/huipay-backend/internal/split/event"
 	"github.com/huipay/huipay-backend/internal/split/executor"
 	"github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/rule"
@@ -235,6 +238,8 @@ func (s *Service) ApproveBill(ctx context.Context, merchantID uint64, batchNo st
 		return nil, errs.New(errs.CodeInternalError, "bill status update failed", 200)
 	}
 	s.appendAudit(ctx, "SPLIT_BILL", batchNo, "APPROVE", merchantID, map[string]any{"bill_id": bill.ID})
+	// 发布账单审批通过事件
+	s.publishBillApprovedEvent(ctx, bill)
 	return billToDTO(bill), nil
 }
 
@@ -259,6 +264,8 @@ func (s *Service) RejectBill(ctx context.Context, merchantID uint64, batchNo str
 		return nil, errs.New(errs.CodeInternalError, "bill status update failed", 200)
 	}
 	s.appendAudit(ctx, "SPLIT_BILL", batchNo, "REJECT", merchantID, map[string]any{"bill_id": bill.ID})
+	// 发布账单驳回事件
+	s.publishBillRejectedEvent(ctx, bill)
 	return billToDTO(bill), nil
 }
 
@@ -383,4 +390,38 @@ func (s *Service) doMatchRule(ctx context.Context, merchantID uint64, req *Execu
 		Channel:    req.Channel,
 	})
 	return matched, matched != nil
+}
+
+// publishBillApprovedEvent 发布账单审批通过事件。
+func (s *Service) publishBillApprovedEvent(ctx context.Context, bill *repository.SplitBillModel) {
+	if s.outboxRepo == nil {
+		return
+	}
+	payload := event.SplitBillApprovedPayload{
+		BillID:      bill.ID,
+		BatchNo:     bill.BatchNo,
+		MerchantID:  bill.MerchantID,
+		RuleCode:    bill.RuleCode,
+		TotalAmount: bill.TotalAmount,
+	}
+	if err := s.outboxRepo.PublishEvent(ctx, event.AggregateSplitBill, bill.BatchNo, event.TypeSplitBillApproved, payload); err != nil {
+		s.logger.Warn("publish bill approved event fail",
+			zap.String("batch_no", bill.BatchNo), zap.Error(err))
+	}
+}
+
+// publishBillRejectedEvent 发布账单驳回事件。
+func (s *Service) publishBillRejectedEvent(ctx context.Context, bill *repository.SplitBillModel) {
+	if s.outboxRepo == nil {
+		return
+	}
+	payload := event.SplitBillRejectedPayload{
+		BillID:     bill.ID,
+		BatchNo:    bill.BatchNo,
+		MerchantID: bill.MerchantID,
+	}
+	if err := s.outboxRepo.PublishEvent(ctx, event.AggregateSplitBill, bill.BatchNo, event.TypeSplitBillRejected, payload); err != nil {
+		s.logger.Warn("publish bill rejected event fail",
+			zap.String("batch_no", bill.BatchNo), zap.Error(err))
+	}
 }

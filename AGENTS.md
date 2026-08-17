@@ -43,8 +43,14 @@
 │   ├── cmd/server/main.go   # 启动入口
 │   ├── infra/               # 基础设施层（config/db/migrator/obs/prom）
 │   ├── internal/            # 业务逻辑（order/payment/account/merchant/split/store/stats/admin）
-│   │   └── split/           # 分账模块（P0 重构后：高内聚低耦合）
+│   │   └── split/           # 分账模块（P0-P5 重构后：高内聚低耦合）
 │   │       ├── alloc/       # 分配方案纯函数计算（无外部依赖，可单测）
+│   │       ├── event/       # 领域事件 + outbox 轮询 + 内存总线（P3）
+│   │       │   ├── event.go     # 事件类型定义与载荷
+│   │       │   ├── outbox.go    # Outbox 仓储（t_outbox_event 表）
+│   │       │   ├── bus.go       # 内存事件总线（发布-订阅）
+│   │       │   ├── worker.go    # 后台轮询投递
+│   │       │   └── handler.go   # 事件处理器（日志/监控）
 │   │       ├── service/     # 编排层，按 UseCase 拆为 5 文件：
 │   │       │   ├── service.go     # Service 结构体 + NewService + 共享基础设施
 │   │       │   ├── ordersplit.go  # 单笔订单分账（Execute / Get / Preview / Retry / ListExecutions）
@@ -67,10 +73,12 @@
 - **API 路由**：`/v1/` 前缀，含收银台、商户、分账、管理后台、门店等模块
 - **前端入口**：各 package 独立 Vite 应用，`pnpm dev:merchant` / `pnpm dev:admin` / `pnpm dev:sdk`
 - **部署端口**：后端服务端口 5000（通过 `HUIPAY_HTTP_PORT` 环境变量覆盖，默认 8080）
-- **分账模块（P0 重构）**：
+- **分账模块（P0-P5 重构）**：
   - `internal/split/alloc/` — 分配方案纯函数计算，无 DB/通道依赖，可独立单测
+  - `internal/split/event/` — 领域事件 + outbox 仓储 + 内存总线（每 5s 轮询投递）
   - `internal/split/service/` — 按 UseCase 拆为 5 文件，各 <= 600 行，handler 零改动
   - 入口：`handler.New(svc, logger)` → `service.NewService(...)`
+- **事件类型**：`SPLIT_ORDER_EXECUTED`、`SPLIT_BILL_APPROVED`、`SPLIT_BILL_REJECTED`、`RECONCILE_DIFF_RESOLVED`
 
 ## 运行与预览
 
@@ -93,6 +101,7 @@
 - **端口**：开发默认 8080，预览/部署用 5001 避免与前端冲突
 - **启动命令**：`cd huipay-web && bash scripts/run.sh`（自动启动 3 个 Vite dev server + 路由服务器）
 - **预览脚本**：`.coze [dev]` → `scripts/build.sh`（安装依赖）+ `scripts/run.sh`（启动全门户预览）
+- **事件系统**：outbox 轮询每 5s 拉取 `t_outbox_event` 待处理事件，投递到内存总线
 
 ### 部署（根 .coze 编排，方案 C）
 

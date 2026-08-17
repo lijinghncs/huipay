@@ -13,6 +13,7 @@ import (
 	"github.com/huipay/huipay-backend/infra/notify"
 	"github.com/huipay/huipay-backend/internal/account/ledger"
 	"github.com/huipay/huipay-backend/internal/account/repository"
+	"github.com/huipay/huipay-backend/internal/split/event"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/splitcfg"
 	"github.com/huipay/huipay-backend/internal/domain/vo"
@@ -81,17 +82,19 @@ type Executor struct {
 	ledger          *ledger.Service
 	channels        *router.Router
 	alerter         notify.Alerter
+	outboxRepo      *event.OutboxRepo
 	logger          *zap.Logger
 }
 
 // NewExecutor 构造 Executor。
-func NewExecutor(wr *repository.WalletRepo, jr *repository.JournalRepo, osr *splitrepo.SplitOrderStatusRepo, channels *router.Router, logger *zap.Logger) *Executor {
+func NewExecutor(wr *repository.WalletRepo, jr *repository.JournalRepo, osr *splitrepo.SplitOrderStatusRepo, channels *router.Router, outbox *event.OutboxRepo, logger *zap.Logger) *Executor {
 	return &Executor{
 		walletRepo:      wr,
 		journalRepo:     jr,
 		orderStatusRepo: osr,
 		ledger:          ledger.NewService(wr, jr, logger),
 		channels:        channels,
+		outboxRepo:      outbox,
 		logger:          logger,
 	}
 }

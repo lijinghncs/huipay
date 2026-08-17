@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/huipay/huipay-backend/infra/prom"
+	"github.com/huipay/huipay-backend/internal/split/event"
 	splitrepo "github.com/huipay/huipay-backend/internal/split/repository"
 	"github.com/huipay/huipay-backend/internal/split/splitcfg"
 	"github.com/huipay/huipay-backend/internal/split/state"
@@ -145,6 +146,10 @@ func (e *Executor) finalizeOrderStatus(ctx context.Context, req *ExecuteRequest,
 	} else {
 		prom.SplitSuccessRate.Set(0)
 	}
+	// 终态发布事件（异步投递，失败不影响主流程）
+	if status.IsTerminal() {
+		e.publishSplitExecutedEvent(ctx, req, string(status), successCount, receiverCount, lastErr)
+	}
 	if lastErr != "" {
 		e.logger.Warn("split order finalized with error",
 			zap.String("order_no", req.OrderNo), zap.String("status", string(status)), zap.Int("success", successCount))
@@ -210,4 +215,25 @@ func (req *ExecuteRequest) AllocationsTotal() int64 {
 		t += a.Amount
 	}
 	return t
+}
+
+// publishSplitExecutedEvent 发布分账执行完成事件到 outbox。
+func (e *Executor) publishSplitExecutedEvent(ctx context.Context, req *ExecuteRequest, status string, successCount, receiverCount int, lastErr string) {
+	if e.outboxRepo == nil {
+		return
+	}
+	payload := event.SplitOrderExecutedPayload{
+		OrderNo:       req.OrderNo,
+		MerchantID:    req.MerchantID,
+		Status:        status,
+		ReceiverCount: receiverCount,
+		SuccessCount:  successCount,
+		TotalAmount:   req.AllocationsTotal(),
+		Degraded:      0,
+		LastError:     lastErr,
+	}
+	if err := e.outboxRepo.PublishEvent(ctx, event.AggregateSplitOrder, req.OrderNo, event.TypeSplitOrderExecuted, payload); err != nil {
+		e.logger.Warn("publish split executed event fail",
+			zap.String("order_no", req.OrderNo), zap.Error(err))
+	}
 }
